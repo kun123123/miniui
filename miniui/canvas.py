@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 from PyQt6.QtCore import QEasingCurve, Qt, QTimer, QRect
@@ -45,6 +46,7 @@ class UiCanvas(QWidget):
             self._bg = QColor(background)
         else:
             self._bg = QColor(self._theme.colors.canvas_bg)
+        self._sync_widget_background()
         self._pressed_button: Button | None = None
         self._focused_input: TextInput | None = None
         self._cursor_visible = True
@@ -57,6 +59,7 @@ class UiCanvas(QWidget):
         self.setMinimumSize(480, 360)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        self.setAutoFillBackground(False)
         self.setMouseTracking(False)
         self._cursor_timer = QTimer(self)
         self._cursor_timer.timeout.connect(self._blink_cursor)
@@ -70,9 +73,24 @@ class UiCanvas(QWidget):
         """换肤：只 mark_paint_dirty + 重绘，不 relayout。"""
         self._theme = theme
         self._bg = QColor(theme.colors.canvas_bg)
+        self._sync_widget_background()
         for node in self.root.iter_subtree():
             node.mark_paint_dirty()
         self.update()
+
+    def _sync_widget_background(self) -> None:
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), self._bg)
+        self.setPalette(pal)
+
+    @staticmethod
+    def _region_qrect(region: Rect) -> QRect:
+        """脏区转 QRect，右/下取 ceil，避免局部重绘留 1px 缝。"""
+        x = int(region.x)
+        y = int(region.y)
+        w = max(1, math.ceil(region.right) - x)
+        h = max(1, math.ceil(region.bottom) - y)
+        return QRect(x, y, w, h)
 
     def relayout(self, *, force: bool = False) -> None:
         """仅当根节点 layout_dirty（或 force）时执行 measure + layout。"""
@@ -139,10 +157,11 @@ class UiCanvas(QWidget):
             node._paint_dirty = False
 
     def _paint_partial(self, painter: QPainter, region: Rect) -> None:
-        qr = QRect(
-            int(region.x), int(region.y), int(region.width), int(region.height)
-        )
+        qr = self._region_qrect(region)
         painter.fillRect(qr, self._bg)
+        for node in self.root.iter_subtree():
+            if node.paint_rect.intersects(region):
+                node.mark_paint_dirty()
         stats: dict[str, int] = {"nodes": 0}
         self.root.paint_region(painter, region, stats=stats)
         self.nodes_painted_last = stats["nodes"]
@@ -294,12 +313,11 @@ class UiCanvas(QWidget):
         if old_r is not None:
             r = Rect.union(old_r, r)
 
-        x, y = int(r.x), int(r.y)
-        w, h = max(1, int(r.width) + 1), max(1, int(r.height) + 1)
+        qr = self._region_qrect(r)
         if sync:
-            self.repaint(x, y, w, h)
+            self.repaint(qr)
         else:
-            self.update(x, y, w, h)
+            self.update(qr)
 
     def _scroll_at(self, x: float, y: float) -> ScrollView | None:
         return self._find_scroll(self.root, x, y)
@@ -321,7 +339,9 @@ class UiCanvas(QWidget):
         if scroll is not None:
             delta = event.angleDelta().y()
             scroll.scroll_by(-delta / 120.0 * 28.0)
-            self.repaint_node(scroll)
+            # 重绘列表所在 Column（含标题、搜索栏与 spacing 缝隙），避免局部重绘留白条
+            target = scroll.parent if scroll.parent is not None else scroll
+            self.repaint_node(target)
             event.accept()
             return
         super().wheelEvent(event)

@@ -7,10 +7,12 @@ from PyQt6.QtGui import QPainter
 from .constraints import Constraints
 from .flex import apply_flex, content_main, measure_children
 from .geometry import Rect, Size
+from .builder import UiScope
 from .node import Node
+from .theme import fill_canvas_rect
 
 
-class Column(Node):
+class Column(UiScope, Node):
     def __init__(
         self,
         children: list[Node] | None = None,
@@ -100,6 +102,7 @@ class Column(Node):
                 y += h + self.spacing
 
     def paint(self, painter: QPainter) -> None:
+        fill_canvas_rect(painter, self.paint_rect)
         for child in self.children:
             child.paint(painter)
 

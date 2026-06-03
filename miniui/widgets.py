@@ -58,7 +58,7 @@ class Text(Node):
         painter.setPen(QColor(theme.colors.text_primary))
         fm = QFontMetrics(self._font())
         r = self.paint_rect
-        baseline = r.y + fm.ascent() + 2
+        baseline = r.y + (r.height + fm.ascent() - fm.descent()) / 2
         display = fit_text_to_width(fm, self.text, r.width, self.overflow)
         painter.drawText(int(r.x), int(baseline), display)
 
@@ -182,10 +182,11 @@ class Button(Node):
         )
         painter.setPen(QColor(c.button_fg))
         painter.setFont(QFont(theme.fonts.family, theme.fonts.size_body))
-        fm = QFontMetrics(painter.font())
-        tx = r.x + (r.width - fm.horizontalAdvance(self.label)) / 2
-        ty = r.y + (r.height + fm.ascent() - fm.descent()) / 2
-        painter.drawText(int(tx), int(ty), self.label)
+        painter.drawText(
+            QRect(int(r.x), int(r.y), int(r.width), int(r.height)),
+            Qt.AlignmentFlag.AlignCenter,
+            self.label,
+        )
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent

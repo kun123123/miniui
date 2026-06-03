@@ -30,6 +30,8 @@ python demos/step14_partial_paint.py
 python demos/step15_ime.py
 python demos/step16_ellipsis.py
 python demos/step17_theme.py
+python demos/step18_app.py
+python demos/step19_ui_with.py
 ```
 
 ## Demo 一览
@@ -53,6 +55,8 @@ python demos/step17_theme.py
 | 中文输入法 | `demos/step15_ime.py` |
 | 文本省略号 | `demos/step16_ellipsis.py` |
 | 浅色 / 深色主题 | `demos/step17_theme.py` |
+| 综合应用 TaskHub | `demos/step18_app.py` |
+| with 块 + State 响应式 | `demos/step19_ui_with.py` |
 
 ## 目录结构
 

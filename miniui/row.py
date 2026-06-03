@@ -7,10 +7,12 @@ from PyQt6.QtGui import QPainter
 from .constraints import Constraints
 from .flex import apply_flex, content_main, measure_children
 from .geometry import Rect, Size
+from .builder import UiScope
 from .node import Node
+from .theme import fill_canvas_rect
 
 
-class Row(Node):
+class Row(UiScope, Node):
     def __init__(
         self,
         children: list[Node] | None = None,
@@ -29,6 +31,18 @@ class Row(Node):
         for child in self.children:
             child.parent = self
         self._child_sizes: list[Size] = []
+
+    def add_child(self, child: Node) -> None:
+        child.parent = self
+        self.children.append(child)
+        self.mark_layout_dirty()
+
+    def remove_child(self, child: Node) -> None:
+        if child not in self.children:
+            return
+        self.children.remove(child)
+        child.parent = None
+        self.mark_layout_dirty()
 
     def measure(self, constraints: Constraints) -> Size:
         inner_w = max(0.0, constraints.max_width - 2 * self.padding)
@@ -95,6 +109,7 @@ class Row(Node):
                 x += w + self.spacing
 
     def paint(self, painter: QPainter) -> None:
+        fill_canvas_rect(painter, self.paint_rect)
         for child in self.children:
             child.paint(painter)
 

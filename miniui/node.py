@@ -30,6 +30,9 @@ class Node(ABC):
         self._paint_dirty = True
         self.paint_dx = 0.0
         self.paint_dy = 0.0
+        from .builder import auto_mount
+
+        auto_mount(self)
 
     @property
     def paint_rect(self) -> Rect:
@@ -84,6 +87,11 @@ class Node(ABC):
         if children:
             if not self.subtree_paint_dirty():
                 return
+            inter = self.paint_rect.intersect(region)
+            if inter is not None:
+                from .theme import fill_canvas_rect
+
+                fill_canvas_rect(painter, inter)
             for child in children:
                 child.paint_region(painter, region, stats=stats)
             if self._paint_dirty:
