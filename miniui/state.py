@@ -85,7 +85,7 @@ class Bindings:
                 scroll._clamp_scroll()
                 scroll.set_damage(self.canvas._node_screen_rect(scroll))
             self.canvas.relayout()
-            self.canvas.repaint()
+            self.canvas.request_repaint()
 
         for st in states:
             st.subscribe(refresh)

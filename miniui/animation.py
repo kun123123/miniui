@@ -41,7 +41,7 @@ def animate_float(
     easing: QEasingCurve.Type = QEasingCurve.Type.OutCubic,
     on_finished: Callable[[], None] | None = None,
 ) -> QPropertyAnimation:
-    """对 node.paint_dx / paint_dy 做属性动画，每帧触发 canvas.update()。"""
+    """对 node.paint_dx / paint_dy 做属性动画，每帧 merge_damage + _flush_repaint（内部 _resolve_dirty_damage）。"""
     # 记录零偏移时的可见区域；避免 caller 提前设为 start 导致首帧 old==new、原位置残留
     saved_dx, saved_dy = node.paint_dx, node.paint_dy
     node.paint_dx, node.paint_dy = 0.0, 0.0

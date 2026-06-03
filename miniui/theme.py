@@ -110,13 +110,9 @@ def pop_theme(token: Token) -> None:
 
 
 def fill_canvas_rect(painter, region: Rect) -> None:
-    """用当前主题画布色填充区域（Column spacing 等无子节点覆盖的缝隙）。"""
-    import math
-
+    """用当前主题画布色填充区域（与 paintEvent clip 对齐，float 边界）。"""
+    from PyQt6.QtCore import QRectF
     from PyQt6.QtGui import QColor
 
     bg = QColor(get_theme().colors.canvas_bg)
-    x, y = int(region.x), int(region.y)
-    w = max(1, math.ceil(region.right) - x)
-    h = max(1, math.ceil(region.bottom) - y)
-    painter.fillRect(x, y, w, h, bg)
+    painter.fillRect(QRectF(region.x, region.y, region.width, region.height), bg)

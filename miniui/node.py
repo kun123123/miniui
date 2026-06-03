@@ -7,7 +7,7 @@ UI 节点基类。
   3. paint(painter)        按 rect 绘制
 
 局部重绘（方案一）：
-  - 擦除：仅 dirty 节点自己的 damage 矩形
+  - 擦除：paintEvent clip 整块填画布色；叶节点 damage 只用于调度重画
   - 绘制：任一子节点 dirty → 父容器调度全部直接子节点 paint，父容器自身不 fill
 """
 
@@ -66,12 +66,23 @@ class Node(ABC):
         self.mark_paint_dirty()
 
     def mark_layout_dirty(self) -> None:
-        """尺寸/结构可能变化：向上冒泡，根需要重新 measure + layout。"""
+        """尺寸/结构可能变化：向上冒泡 layout_dirty；仅本节点 mark paint_dirty。"""
         self._layout_dirty = True
         self._paint_dirty = True
         if self.parent is not None:
             if not self.parent._layout_dirty:
-                self.parent.mark_layout_dirty()
+                self.parent._mark_layout_dirty_upstream()
+        else:
+            canvas = self._find_canvas()
+            if canvas is not None:
+                canvas._schedule_relayout()
+
+    def _mark_layout_dirty_upstream(self) -> None:
+        """祖先只标 layout_dirty，不标 paint_dirty（方案一容器不重画自身）。"""
+        self._layout_dirty = True
+        if self.parent is not None:
+            if not self.parent._layout_dirty:
+                self.parent._mark_layout_dirty_upstream()
         else:
             canvas = self._find_canvas()
             if canvas is not None:
@@ -82,7 +93,7 @@ class Node(ABC):
         self._paint_dirty = True
         canvas = self._find_canvas()
         if canvas is not None:
-            canvas._schedule_repaint(self)
+            canvas._schedule_update()
 
     def set_damage(self, rect: Rect) -> None:
         """标记需重绘，并记录要擦除的屏幕区域（layout 变化时为旧∪新）。"""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtCore import QPointF, Qt, QRect, QRectF
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QInputMethodEvent, QPainter
 
 from .constraints import Constraints
@@ -12,6 +12,11 @@ from .geometry import Rect, Size
 from .node import Node
 from .text_layout import OverflowMode, fit_text_to_width
 from .theme import get_theme
+
+
+def _qrectf(r: Rect) -> QRectF:
+    """layout/paint 矩形 → Qt 浮点矩形，避免 int 截断与 damage 区域不一致。"""
+    return QRectF(r.x, r.y, r.width, r.height)
 
 
 class Text(Node):
@@ -68,7 +73,7 @@ class Text(Node):
         r = self.paint_rect
         baseline = r.y + (r.height + fm.ascent() - fm.descent()) / 2
         display = fit_text_to_width(fm, self._text, r.width, self.overflow)
-        painter.drawText(int(r.x), int(baseline), display)
+        painter.drawText(QPointF(r.x, baseline), display)
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
@@ -133,13 +138,11 @@ class Box(Node):
         r = self.paint_rect
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(fill)
-        painter.drawRoundedRect(
-            int(r.x), int(r.y), int(r.width), int(r.height), radius, radius
-        )
+        painter.drawRoundedRect(_qrectf(r), radius, radius)
         if self.label:
             painter.setFont(QFont(theme.fonts.family, theme.fonts.size_body))
             painter.setPen(QColor(theme.colors.box_label))
-            painter.drawText(int(r.x + 8), int(r.y + 20), self.label)
+            painter.drawText(QPointF(r.x + 8, r.y + 20), self.label)
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
@@ -208,13 +211,11 @@ class Button(Node):
         else:
             painter.setPen(QColor(c.button_border))
             painter.setBrush(QColor(c.button_bg))
-        painter.drawRoundedRect(
-            int(r.x), int(r.y), int(r.width), int(r.height), m.radius, m.radius
-        )
+        painter.drawRoundedRect(_qrectf(r), m.radius, m.radius)
         painter.setPen(QColor(c.button_fg))
         painter.setFont(QFont(theme.fonts.family, theme.fonts.size_body))
         painter.drawText(
-            QRect(int(r.x), int(r.y), int(r.width), int(r.height)),
+            _qrectf(r),
             Qt.AlignmentFlag.AlignCenter,
             self._label,
         )
@@ -430,9 +431,7 @@ class TextInput(Node):
             QColor(c.input_border_focused if self.focused else c.input_border)
         )
         painter.setBrush(QColor(c.input_bg))
-        painter.drawRoundedRect(
-            int(r.x), int(r.y), int(r.width), int(r.height), m.radius, m.radius
-        )
+        painter.drawRoundedRect(_qrectf(r), m.radius, m.radius)
 
         font = self._font()
         painter.setFont(font)
@@ -447,10 +446,10 @@ class TextInput(Node):
             x = tx
             painter.setPen(QColor(c.input_text))
             if before:
-                painter.drawText(int(x), int(baseline), before)
+                painter.drawText(QPointF(x, baseline), before)
                 x += fm.horizontalAdvance(before)
             if self.composition:
-                painter.drawText(int(x), int(baseline), self.composition)
+                painter.drawText(QPointF(x, baseline), self.composition)
                 comp_w = fm.horizontalAdvance(self.composition)
                 painter.drawLine(
                     int(x),
@@ -460,10 +459,10 @@ class TextInput(Node):
                 )
                 x += comp_w
             if after:
-                painter.drawText(int(x), int(baseline), after)
+                painter.drawText(QPointF(x, baseline), after)
         elif self.placeholder:
             painter.setPen(QColor(c.text_muted))
-            painter.drawText(int(tx), int(baseline), self.placeholder)
+            painter.drawText(QPointF(tx, baseline), self.placeholder)
 
         if self.focused and self._cursor_visible:
             cx = tx + fm.horizontalAdvance(self._display_before_caret())
