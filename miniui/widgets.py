@@ -26,10 +26,21 @@ class Text(Node):
         overflow: OverflowMode = "visible",
     ) -> None:
         super().__init__(flex=flex, margin=margin)
-        self.text = text
+        self._text = text
         self.font_size = font_size
         self.bold = bold
         self.overflow = overflow
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        if self._text == value:
+            return
+        self._text = value
+        self.mark_layout_dirty()
 
     def _font(self) -> QFont:
         theme = get_theme()
@@ -39,7 +50,7 @@ class Text(Node):
 
     def measure(self, constraints: Constraints) -> Size:
         fm = QFontMetrics(self._font())
-        w = min(float(fm.horizontalAdvance(self.text)), constraints.max_width)
+        w = min(float(fm.horizontalAdvance(self._text)), constraints.max_width)
         h = float(fm.height())
         return Size(w, h)
 
@@ -47,10 +58,7 @@ class Text(Node):
         self.rect = rect
 
     def set_text(self, text: str) -> None:
-        if self.text == text:
-            return
         self.text = text
-        self.mark_layout_dirty()
 
     def paint(self, painter: QPainter) -> None:
         theme = get_theme()
@@ -59,14 +67,14 @@ class Text(Node):
         fm = QFontMetrics(self._font())
         r = self.paint_rect
         baseline = r.y + (r.height + fm.ascent() - fm.descent()) / 2
-        display = fit_text_to_width(fm, self.text, r.width, self.overflow)
+        display = fit_text_to_width(fm, self._text, r.width, self.overflow)
         painter.drawText(int(r.x), int(baseline), display)
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
         r = self.rect
         return (
-            f"{pad}Text({self.text!r}) "
+            f"{pad}Text({self._text!r}) "
             f"rect=({r.x:.0f},{r.y:.0f},{r.width:.0f}x{r.height:.0f})"
         )
 
@@ -152,16 +160,38 @@ class Button(Node):
         margin: float = 0,
     ) -> None:
         super().__init__(flex=flex, margin=margin)
-        self.label = label
+        self._label = label
         self.min_width = min_width
         self.height = height
         self.on_click = on_click
         self._pressed = False
 
+    @property
+    def label(self) -> str:
+        return self._label
+
+    @label.setter
+    def label(self, value: str) -> None:
+        if self._label == value:
+            return
+        self._label = value
+        self.mark_layout_dirty()
+
+    @property
+    def pressed(self) -> bool:
+        return self._pressed
+
+    @pressed.setter
+    def pressed(self, value: bool) -> None:
+        if self._pressed == value:
+            return
+        self._pressed = value
+        self.mark_paint_dirty()
+
     def measure(self, constraints: Constraints) -> Size:
         theme = get_theme()
         fm = QFontMetrics(QFont(theme.fonts.family, theme.fonts.size_body))
-        w = max(self.min_width, float(fm.horizontalAdvance(self.label) + 24))
+        w = max(self.min_width, float(fm.horizontalAdvance(self._label) + 24))
         return Size(min(w, constraints.max_width), self.height)
 
     def layout(self, rect: Rect) -> None:
@@ -186,14 +216,14 @@ class Button(Node):
         painter.drawText(
             QRect(int(r.x), int(r.y), int(r.width), int(r.height)),
             Qt.AlignmentFlag.AlignCenter,
-            self.label,
+            self._label,
         )
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
         r = self.rect
         return (
-            f"{pad}Button({self.label!r}) "
+            f"{pad}Button({self._label!r}) "
             f"rect=({r.x:.0f},{r.y:.0f},{r.width:.0f}x{r.height:.0f})"
         )
 
@@ -213,15 +243,50 @@ class TextInput(Node):
         on_submit: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(flex=flex, margin=margin)
-        self.text = text
+        self._text = text
         self.placeholder = placeholder
         self.height = height
         self.min_width = min_width
         self.on_submit = on_submit
-        self.cursor = len(text)
-        self.focused = False
+        self._cursor = len(text)
+        self._focused = False
         self._cursor_visible = True
         self.composition = ""
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        if self._text == value:
+            return
+        self._text = value
+        self._cursor = max(0, min(self._cursor, len(value)))
+        self.mark_layout_dirty()
+
+    @property
+    def cursor(self) -> int:
+        return self._cursor
+
+    @cursor.setter
+    def cursor(self, value: int) -> None:
+        idx = max(0, min(int(value), len(self._text)))
+        if self._cursor == idx:
+            return
+        self._cursor = idx
+        self.mark_paint_dirty()
+
+    @property
+    def focused(self) -> bool:
+        return self._focused
+
+    @focused.setter
+    def focused(self, value: bool) -> None:
+        if self._focused == value:
+            return
+        self._focused = value
+        self.mark_paint_dirty()
 
     def clear_composition(self) -> None:
         if not self.composition:
@@ -258,7 +323,7 @@ class TextInput(Node):
 
     def layout(self, rect: Rect) -> None:
         self.rect = rect
-        self.cursor = max(0, min(self.cursor, len(self.text)))
+        self._cursor = max(0, min(self._cursor, len(self._text)))
 
     def move_cursor_to_x(self, screen_x: float) -> None:
         self.clear_composition()
@@ -267,8 +332,8 @@ class TextInput(Node):
         r = self.paint_rect
         local_x = max(0.0, screen_x - r.x - theme.metrics.input_padding_x)
         idx = 0
-        for i in range(len(self.text) + 1):
-            if fm.horizontalAdvance(self.text[:i]) > local_x:
+        for i in range(len(self._text) + 1):
+            if fm.horizontalAdvance(self._text[:i]) > local_x:
                 break
             idx = i
         self.cursor = idx
@@ -276,21 +341,24 @@ class TextInput(Node):
     def insert(self, ch: str) -> None:
         if not ch:
             return
-        self.text = self.text[: self.cursor] + ch + self.text[self.cursor :]
-        self.cursor += len(ch)
+        pos = self._cursor
+        self._text = self._text[:pos] + ch + self._text[pos:]
+        self._cursor = pos + len(ch)
         self.mark_paint_dirty()
 
     def backspace(self) -> None:
-        if self.cursor <= 0:
+        if self._cursor <= 0:
             return
-        self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
-        self.cursor -= 1
+        pos = self._cursor
+        self._text = self._text[: pos - 1] + self._text[pos:]
+        self._cursor = pos - 1
         self.mark_paint_dirty()
 
     def delete_forward(self) -> None:
-        if self.cursor >= len(self.text):
+        if self._cursor >= len(self._text):
             return
-        self.text = self.text[: self.cursor] + self.text[self.cursor + 1 :]
+        pos = self._cursor
+        self._text = self._text[:pos] + self._text[pos + 1 :]
         self.mark_paint_dirty()
 
     def handle_input_method(self, event: QInputMethodEvent) -> bool:
@@ -338,19 +406,15 @@ class TextInput(Node):
             return True
         if key == Qt.Key.Key_Left:
             self.cursor = max(0, self.cursor - 1)
-            self.mark_paint_dirty()
             return True
         if key == Qt.Key.Key_Right:
             self.cursor = min(len(self.text), self.cursor + 1)
-            self.mark_paint_dirty()
             return True
         if key == Qt.Key.Key_Home:
             self.cursor = 0
-            self.mark_paint_dirty()
             return True
         if key == Qt.Key.Key_End:
             self.cursor = len(self.text)
-            self.mark_paint_dirty()
             return True
         if text and len(text) == 1 and text.isprintable():
             self.insert(text)

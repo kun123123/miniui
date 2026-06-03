@@ -34,6 +34,9 @@ class Column(UiScope, Node):
     def add_child(self, child: Node) -> None:
         child.parent = self
         self.children.append(child)
+        canvas = child._find_canvas()
+        if canvas is not None:
+            canvas._bind_node_tree(child)
         self.mark_layout_dirty()
 
     def remove_child(self, child: Node) -> None:

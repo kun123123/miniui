@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 from PyQt6.QtGui import QColor, QPainter
 
 from .constraints import Constraints
@@ -31,6 +29,9 @@ class ScrollView(UiScope, Node):
     def set_child(self, child: Node) -> None:
         self.child = child
         child.parent = self
+        canvas = child._find_canvas()
+        if canvas is not None:
+            canvas._bind_node_tree(child)
         self.mark_layout_dirty()
 
     @property
@@ -92,34 +93,22 @@ class ScrollView(UiScope, Node):
         *,
         stats: dict[str, int] | None = None,
     ) -> None:
+        """ScrollView：方案一 — 擦除已在 canvas 完成，此处只 paint 全部子节点。"""
         vr = self.rect
         if not vr.intersects(region):
             return
         if not self.subtree_paint_dirty():
             return
-        inter = vr.intersect(region)
-        if inter is None:
+        if vr.intersect(region) is None:
             return
-        bg = QColor(get_theme().colors.canvas_bg)
-        ix, iy = int(inter.x), int(inter.y)
-        iw = max(1, math.ceil(inter.right) - ix)
-        ih = max(1, math.ceil(inter.bottom) - iy)
-        painter.fillRect(ix, iy, iw, ih, bg)
         painter.save()
         painter.setClipRect(int(vr.x), int(vr.y), int(vr.width), int(vr.height))
         painter.translate(0, -self.scroll_y)
-        if self.child is not None:
-            # 视口内任意子项 dirty 时整段重画，避免只画 dirty 行导致列表被擦没
-            self.child.paint(painter)
-            if stats is not None:
-                for n in self.child.iter_subtree():
-                    if not getattr(n, "children", None):
-                        stats["nodes"] += 1
+        self._paint_all_children(painter)
         painter.restore()
-        if self.child is not None:
-            for node in self.child.iter_subtree():
-                node.clear_paint_state()
-        self.clear_paint_state()
+        if stats is not None:
+            self._count_leaf_stats(stats)
+        self._clear_subtree_paint_dirty()
 
     def hit_test(self, x: float, y: float) -> Node | None:
         if not self.rect.contains(x, y) or self.child is None:

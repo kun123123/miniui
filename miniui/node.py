@@ -5,6 +5,10 @@ UI 节点基类。
   1. measure(constraints)  子 → 父汇报「我需要多大」
   2. layout(rect)          父 → 子分配最终矩形
   3. paint(painter)        按 rect 绘制
+
+局部重绘（方案一）：
+  - 擦除：仅 dirty 节点自己的 damage 矩形
+  - 绘制：任一子节点 dirty → 父容器调度全部直接子节点 paint，父容器自身不 fill
 """
 
 from __future__ import annotations
@@ -29,11 +33,21 @@ class Node(ABC):
         self._layout_dirty = True
         self._paint_dirty = True
         self._damage_rect: Rect | None = None
+        self._canvas = None  # UiCanvas，由画布在挂载树时注入
         self.paint_dx = 0.0
         self.paint_dy = 0.0
         from .builder import auto_mount
 
         auto_mount(self)
+
+    def _find_canvas(self):
+        node: Node | None = self
+        while node is not None:
+            canvas = node._canvas
+            if canvas is not None:
+                return canvas
+            node = node.parent
+        return None
 
     @property
     def paint_rect(self) -> Rect:
@@ -55,12 +69,20 @@ class Node(ABC):
         """尺寸/结构可能变化：向上冒泡，根需要重新 measure + layout。"""
         self._layout_dirty = True
         self._paint_dirty = True
-        if self.parent is not None and not self.parent._layout_dirty:
-            self.parent.mark_layout_dirty()
+        if self.parent is not None:
+            if not self.parent._layout_dirty:
+                self.parent.mark_layout_dirty()
+        else:
+            canvas = self._find_canvas()
+            if canvas is not None:
+                canvas._schedule_relayout()
 
     def mark_paint_dirty(self) -> None:
-        """仅外观变化（如按下态），不触发布局。"""
+        """仅外观变化（如按下态），不触发布局；已挂载画布时自动排队重绘。"""
         self._paint_dirty = True
+        canvas = self._find_canvas()
+        if canvas is not None:
+            canvas._schedule_repaint(self)
 
     def set_damage(self, rect: Rect) -> None:
         """标记需重绘，并记录要擦除的屏幕区域（layout 变化时为旧∪新）。"""
@@ -92,15 +114,55 @@ class Node(ABC):
     def _has_paint_offset(self) -> bool:
         return self.paint_dx != 0.0 or self.paint_dy != 0.0
 
-    def _paint_container(self, painter: QPainter) -> None:
-        """Row/Column：有 paint_dx/dy 时平移整棵子树（任务行动画需要）。"""
+    def erase_before_repaint(self, painter: QPainter, bg) -> None:
+        """方案一：只擦本节点 damage 矩形（画布色）。"""
         from .theme import fill_canvas_rect
 
+        if self._damage_rect is None:
+            return
+        fill_canvas_rect(painter, self._damage_rect)
+
+    def _paint_all_children(self, painter: QPainter) -> None:
+        """方案一：父不重画自身，只 paint 全部直接子节点（含动画 translate）。"""
         children = getattr(self, "children", ())
         if self._has_paint_offset():
             painter.save()
             painter.translate(self.paint_dx, self.paint_dy)
-            fill_canvas_rect(painter, self.rect)
+            for child in children:
+                child.paint(painter)
+            painter.restore()
+            return
+        for child in children:
+            child.paint(painter)
+
+    def _container_intersects_region(self, region: Rect) -> bool:
+        hit = self.paint_rect
+        if self._has_paint_offset():
+            hit = Rect.union(self.rect, self.paint_rect)
+        if hit.intersects(region):
+            return True
+        for child in getattr(self, "children", ()):
+            if child.paint_rect.intersects(region):
+                return True
+            if child._damage_rect is not None and child._damage_rect.intersects(region):
+                return True
+        return False
+
+    def _count_leaf_stats(self, stats: dict[str, int]) -> None:
+        for n in self.iter_subtree():
+            if not getattr(n, "children", None):
+                stats["nodes"] += 1
+
+    def _paint_container(self, painter: QPainter) -> None:
+        """整窗/full paint 用：fill 容器背景 + 全部子节点。"""
+        from .theme import fill_canvas_rect
+
+        children = getattr(self, "children", ())
+        if self._has_paint_offset():
+            cover = Rect.union(self.rect, self.paint_rect)
+            fill_canvas_rect(painter, cover)
+            painter.save()
+            painter.translate(self.paint_dx, self.paint_dy)
             for child in children:
                 child.paint(painter)
             painter.restore()
@@ -120,39 +182,36 @@ class Node(ABC):
         *,
         stats: dict[str, int] | None = None,
     ) -> None:
-        """仅绘制与 region 相交且子树含 paint_dirty 的节点。"""
-        if not self.paint_rect.intersects(region):
-            return
-
+        """局部重绘：方案一（仅直接父层调度全部子节点 paint）。"""
         children = getattr(self, "children", None)
         if children:
+            if not self._container_intersects_region(region):
+                return
             if not self.subtree_paint_dirty():
                 return
-            if self._has_paint_offset():
-                if self.paint_rect.intersects(region):
-                    self.paint(painter)
-                    self._clear_subtree_paint_dirty()
-                    if stats is not None:
-                        for n in self.iter_subtree():
-                            if not getattr(n, "children", None):
-                                stats["nodes"] += 1
-                return
-            if self._paint_dirty and self.paint_rect.intersects(region):
-                # 容器 dirty 时整棵子树重画（动画结束 offset 归零时子叶可能未 dirty）
-                self.paint(painter)
+            if self._paint_dirty or self._has_paint_offset():
+                self._paint_all_children(painter)
                 self._clear_subtree_paint_dirty()
                 if stats is not None:
-                    for n in self.iter_subtree():
-                        if not getattr(n, "children", None):
-                            stats["nodes"] += 1
+                    self._count_leaf_stats(stats)
+                return
+            if any(
+                ch._paint_dirty and not getattr(ch, "children", None)
+                for ch in children
+            ):
+                self._paint_all_children(painter)
+                self._clear_subtree_paint_dirty()
+                if stats is not None:
+                    self._count_leaf_stats(stats)
                 return
             for child in children:
-                child.paint_region(painter, region, stats=stats)
-            if self._paint_dirty:
-                self.clear_paint_state()
+                if child.subtree_paint_dirty():
+                    child.paint_region(painter, region, stats=stats)
             return
 
         if not self._paint_dirty:
+            return
+        if not self.paint_rect.intersects(region):
             return
         self.paint(painter)
         self.clear_paint_state()

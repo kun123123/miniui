@@ -12,6 +12,7 @@ from PyQt6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QRegion,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -21,7 +22,6 @@ from .constraints import Constraints
 from .geometry import Rect
 from .node import Node
 from .scroll import ScrollView
-from .row import Row
 from .theme import Theme, pop_theme, push_theme
 from .widgets import Button, TextInput
 
@@ -41,7 +41,12 @@ class UiCanvas(QWidget):
         background: str | None = None,
     ) -> None:
         super().__init__()
-        self.root = root
+        self._root = root
+        self._pending_repaint_nodes: set[Node] = set()
+        self._needs_relayout = False
+        self._update_timer = QTimer(self)
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(self._process_scheduled_updates)
         self._theme = theme or Theme.light()
         if background is not None:
             self._bg = QColor(background)
@@ -65,6 +70,55 @@ class UiCanvas(QWidget):
         self._cursor_timer = QTimer(self)
         self._cursor_timer.timeout.connect(self._blink_cursor)
         self._cursor_timer.start(530)
+        self._bind_node_tree(root)
+
+    @property
+    def root(self) -> Node:
+        return self._root
+
+    @root.setter
+    def root(self, node: Node) -> None:
+        self._root = node
+        self._bind_node_tree(node)
+
+    def _bind_node_tree(self, node: Node) -> None:
+        """把画布引用挂到子树，供 mark_*_dirty 自动调度重绘。"""
+        node._canvas = self
+        for child in getattr(node, "children", ()):
+            self._bind_node_tree(child)
+        if isinstance(node, ScrollView) and node.child is not None:
+            self._bind_node_tree(node.child)
+
+    def _schedule_update(self) -> None:
+        if not self._update_timer.isActive():
+            self._update_timer.start(0)
+
+    def _schedule_relayout(self) -> None:
+        self._needs_relayout = True
+        self._schedule_update()
+
+    def _schedule_repaint(self, node: Node) -> None:
+        self._pending_repaint_nodes.add(node)
+        self._schedule_update()
+
+    def _apply_repaint_damage(self, node: Node) -> None:
+        if isinstance(node, TextInput) and node is self._focused_input:
+            node._cursor_visible = self._cursor_visible
+        scroll = self._enclosing_scroll(node)
+        if scroll is not None and node is not scroll:
+            scroll.set_damage(self._node_screen_rect(scroll))
+            node._paint_dirty = True
+        else:
+            node.set_damage(self._node_screen_rect(node))
+
+    def _process_scheduled_updates(self) -> None:
+        if self.root._layout_dirty or self._needs_relayout:
+            self.relayout()
+            self._needs_relayout = False
+        for node in self._pending_repaint_nodes:
+            self._apply_repaint_damage(node)
+        self._pending_repaint_nodes.clear()
+        self._flush_repaint(sync=False)
 
     @property
     def theme(self) -> Theme:
@@ -220,48 +274,105 @@ class UiCanvas(QWidget):
                 continue
             node._damage_rect = self._node_screen_rect(node)
 
-    def _collect_dirty_damage(self) -> Rect | None:
-        region: Rect | None = None
-        dirty_scrolls: list[ScrollView] = []
+    def _scroll_repaint_needed(self, scroll: ScrollView) -> bool:
+        """仅当视口或内容确有 damage 时才重绘 ScrollView，避免陈旧 dirty 牵连工具栏。"""
+        if not scroll.subtree_paint_dirty():
+            return False
+        if scroll._paint_dirty or scroll._damage_rect is not None:
+            return True
+        if scroll.child is None:
+            return False
+        for node in scroll.child.iter_subtree():
+            if node._damage_rect is not None:
+                return True
+        return False
+
+    def _clear_stale_scroll_dirty(self, scroll: ScrollView) -> None:
+        """清除仅有 paint_dirty、无 damage 的陈旧标记（不会触发有效重绘）。"""
+        for node in scroll.iter_subtree():
+            node.clear_paint_state()
+
+    def _iter_dirty_damage_nodes(self):
+        """遍历需要擦除的 dirty 节点（Scroll 视口 / 非 Scroll 内容）。"""
+        seen_scrolls: set[int] = set()
         for node in self.root.iter_subtree():
-            if isinstance(node, ScrollView) and node.subtree_paint_dirty():
-                dirty_scrolls.append(node)
+            if isinstance(node, ScrollView):
+                if id(node) in seen_scrolls:
+                    continue
+                seen_scrolls.add(id(node))
+                if self._scroll_repaint_needed(node):
+                    yield node
+                else:
+                    self._clear_stale_scroll_dirty(node)
+                continue
             if not node._paint_dirty or node._damage_rect is None:
                 continue
-            if isinstance(node, ScrollView) or self._is_scroll_content(node):
+            if self._is_scroll_content(node):
                 continue
-            region = (
-                node._damage_rect
-                if region is None
-                else Rect.union(region, node._damage_rect)
-            )
-        for scroll in dirty_scrolls:
-            sd = self._scroll_damage(scroll)
-            region = sd if region is None else Rect.union(region, sd)
-        return region
+            yield node
+
+    def _erase_dirty_targets(self, painter: QPainter) -> None:
+        """方案一：仅擦 dirty 节点各自的 damage 矩形。"""
+        for node in self._iter_dirty_damage_nodes():
+            node.erase_before_repaint(painter, self._bg)
+
+    def _collect_dirty_damage_regions(self) -> list[Rect]:
+        """
+        每个 dirty 节点各自一块擦除区（精确 rect，不合并、不扩父、不加 pad）。
+        ScrollView 视口单独一块；Scroll 内叶节点 damage 不参与并集。
+        """
+        regions: list[Rect] = []
+        seen_scrolls: set[int] = set()
+
+        for node in self.root.iter_subtree():
+            if isinstance(node, ScrollView):
+                if id(node) in seen_scrolls:
+                    continue
+                seen_scrolls.add(id(node))
+                if self._scroll_repaint_needed(node):
+                    regions.append(self._scroll_damage(node))
+                else:
+                    self._clear_stale_scroll_dirty(node)
+                continue
+            if not node._paint_dirty or node._damage_rect is None:
+                continue
+            if self._is_scroll_content(node):
+                continue
+            regions.append(node._damage_rect)
+
+        return regions
 
     def _flush_repaint(self, *, sync: bool = True) -> None:
-        """收集所有 dirty 节点的 damage 并集 → 擦除 → paintEvent 里只画 dirty 节点。"""
+        """收集各节点精确 damage → 分区擦除 → paintEvent 里只画 dirty 子树。"""
         self._ensure_dirty_damage()
-        region = self._collect_dirty_damage()
-        if region is None:
+        regions = self._collect_dirty_damage_regions()
+        if not regions:
             return
-        pad = 3.0
-        region = Rect(
-            region.x - pad,
-            region.y - pad,
-            region.width + 2 * pad,
-            region.height + 2 * pad,
-        )
-        qr = self._region_qrect(region)
+        qregion = QRegion()
+        for sub in regions:
+            qregion = qregion.united(self._region_qrect(sub))
         if sync:
-            self.repaint(qr)
+            self.repaint(qregion)
         else:
-            self.update(qr)
+            self.update(qregion)
+
+    @staticmethod
+    def _bounds_of_regions(regions: list[Rect]) -> Rect:
+        bounds: Rect | None = None
+        for r in regions:
+            bounds = r if bounds is None else Rect.union(bounds, r)
+        return bounds if bounds is not None else Rect(0, 0, 0, 0)
 
     def _paint_partial(self, painter: QPainter, region: Rect) -> None:
-        qr = self._region_qrect(region)
-        painter.fillRect(qr, self._bg)
+        self._erase_dirty_targets(painter)
+        erase_regions = self._collect_dirty_damage_regions()
+        if erase_regions:
+            bounds = self._bounds_of_regions(erase_regions)
+            clipped = Rect.intersect(bounds, region)
+            if clipped is not None:
+                region = clipped
+            else:
+                region = bounds
         stats: dict[str, int] = {"nodes": 0}
         self.root.paint_region(painter, region, stats=stats)
         self.nodes_painted_last = stats["nodes"]
@@ -287,11 +398,9 @@ class UiCanvas(QWidget):
         if old is not None:
             old.focused = False
             old.clear_composition()
-            self.repaint_node(old)
         if inp is not None:
             inp.focused = True
             self.setFocus()
-            self.repaint_node(inp)
         self._update_input_method()
 
     def _update_input_method(self) -> None:
@@ -395,34 +504,14 @@ class UiCanvas(QWidget):
 
     def repaint_node(self, node: Node, *, sync: bool = True) -> None:
         """
-        请求重绘：layout 脏则 relayout（仅 rect 变化的节点 set_damage）；
-        否则只给当前节点设 damage；paintEvent 收集 dirty 并集后擦+画。
+        请求重绘：只给目标节点设精确 damage（不扩父、不加 pad）；
+        paintEvent 擦除该 rect 后由父容器调度 paint_region 重画 dirty 子节点。
         """
-        if isinstance(node, TextInput) and node is self._focused_input:
-            node._cursor_visible = self._cursor_visible
         if self.root._layout_dirty:
             self.relayout()
         else:
-            scroll = self._enclosing_scroll(node)
-            if scroll is not None and node is not scroll:
-                scroll.set_damage(self._node_screen_rect(scroll))
-                node.mark_paint_dirty()
-            else:
-                node.set_damage(self._node_screen_rect(node))
+            self._apply_repaint_damage(node)
         self._flush_repaint(sync=sync)
-
-    def _repaint_button(self, btn: Button) -> None:
-        """按钮外观变化时重绘；多按钮 Row（非 ScrollView 内）整行重绘，避免局部擦除留白。"""
-        if self._enclosing_scroll(btn) is not None:
-            self.repaint_node(btn)
-            return
-        parent = btn.parent
-        if isinstance(parent, Row) and len(parent.children) > 1:
-            for ch in parent.children:
-                ch.mark_paint_dirty()
-            self.repaint_node(parent)
-        else:
-            self.repaint_node(btn)
 
     def _repaint_scroll(self, scroll: ScrollView, *, sync: bool = False) -> None:
         """滚动后只擦 ScrollView 视口并重画列表，避免误擦同级搜索栏/添加栏。"""
@@ -462,13 +551,11 @@ class UiCanvas(QWidget):
         if isinstance(hit, TextInput):
             self._set_focus(hit)
             hit.move_cursor_to_x(x)
-            self.repaint_node(hit)
         else:
             self._set_focus(None)
         if isinstance(hit, Button):
-            hit._pressed = True
+            hit.pressed = True
             self._pressed_button = hit
-            self._repaint_button(hit)
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -476,11 +563,10 @@ class UiCanvas(QWidget):
         btn = self._pressed_button
         self._pressed_button = None
         if btn is not None:
-            btn._pressed = False
+            btn.pressed = False
             hit = self.root.hit_test(x, y)
             if hit is btn and btn.on_click is not None:
                 btn.on_click()
-            self._repaint_button(btn)
         event.accept()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

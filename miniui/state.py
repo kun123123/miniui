@@ -57,7 +57,6 @@ class Bindings:
     ) -> None:
         def apply() -> None:
             node.set_text(getter())
-            self.canvas.repaint_node(node)
 
         for st in states:
             st.subscribe(apply)
@@ -84,10 +83,7 @@ class Bindings:
             if scroll is not None:
                 scroll.scroll_y = 0.0
                 scroll._clamp_scroll()
-                scroll.mark_paint_dirty()
-                if scroll.child is not None:
-                    for node in scroll.child.iter_subtree():
-                        node.mark_paint_dirty()
+                scroll.set_damage(self.canvas._node_screen_rect(scroll))
             self.canvas.relayout()
             self.canvas.repaint()
 

@@ -11,24 +11,49 @@ pip install -r requirements.txt
 
 ## 快速开始
 
-组件用法与最佳实践见 **[demos/README.md](demos/README.md)**。
+```python
+import sys
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
 
-```bash
-python demos/minimal_app.py
-python demos/layout.py
-python demos/widgets.py
-python demos/scroll.py
-python demos/state_with.py
-python demos/animation.py
-python demos/demo_app.py
-python demos/gallery.py
+from miniui import Button, Column, Text, UiCanvas
+
+
+def main() -> None:
+    app = QApplication(sys.argv)
+    label = Text("Hello MiniUI", font_size=18, bold=True)
+
+    def on_click() -> None:
+        label.set_text("已点击")
+
+    canvas = UiCanvas(
+        Column(
+            padding=20,
+            spacing=12,
+            children=[label, Button("点我", on_click=on_click)],
+        )
+    )
+
+    window = QMainWindow()
+    central = QWidget()
+    lay = QVBoxLayout(central)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(canvas)
+    window.setCentralWidget(central)
+    window.resize(360, 200)
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
 ```
+
+组件 API 与用法说明见 **[docs/README.md](docs/README.md)**。
 
 ## 目录
 
 ```text
 miniui/       框架核心
-demos/        组件参考 + 最小示例
 docs/         原理笔记，见 docs/README.md
 ```
 

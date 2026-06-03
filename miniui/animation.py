@@ -42,14 +42,24 @@ def animate_float(
     on_finished: Callable[[], None] | None = None,
 ) -> QPropertyAnimation:
     """对 node.paint_dx / paint_dy 做属性动画，每帧触发 canvas.update()。"""
+    # 记录零偏移时的可见区域；避免 caller 提前设为 start 导致首帧 old==new、原位置残留
+    saved_dx, saved_dy = node.paint_dx, node.paint_dy
+    node.paint_dx, node.paint_dy = 0.0, 0.0
+    at_rest_paint = canvas._node_screen_rect(node)
+    node.paint_dx, node.paint_dy = saved_dx, saved_dy
+
+    first = [True]
 
     def apply(v: float) -> None:
         old_paint = canvas._node_screen_rect(node)
         slot = canvas._node_layout_screen_rect(node)
         setattr(node, attr, v)
         new_paint = canvas._node_screen_rect(node)
-        # 轨迹 + layout 槽位，避免滑入时槽位留白线
-        node.merge_damage(Rect.union(Rect.union(slot, old_paint), new_paint))
+        damage = Rect.union(Rect.union(slot, old_paint), new_paint)
+        if first[0]:
+            first[0] = False
+            damage = Rect.union(damage, at_rest_paint)
+        node.merge_damage(damage)
         canvas._flush_repaint()
 
     target = _FloatAnimTarget(start, apply)

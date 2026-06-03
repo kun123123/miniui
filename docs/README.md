@@ -1,7 +1,5 @@
 # MiniUI 文档索引
 
-**组件 API 与最小示例** → [demos/README.md](../demos/README.md)（首选）
-
 ## 原理笔记
 
 | 主题 | 文档 |
