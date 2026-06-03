@@ -28,6 +28,7 @@ class Node(ABC):
         self.margin = margin
         self._layout_dirty = True
         self._paint_dirty = True
+        self._damage_rect: Rect | None = None
         self.paint_dx = 0.0
         self.paint_dy = 0.0
         from .builder import auto_mount
@@ -61,6 +62,22 @@ class Node(ABC):
         """仅外观变化（如按下态），不触发布局。"""
         self._paint_dirty = True
 
+    def set_damage(self, rect: Rect) -> None:
+        """标记需重绘，并记录要擦除的屏幕区域（layout 变化时为旧∪新）。"""
+        self._damage_rect = rect
+        self._paint_dirty = True
+
+    def merge_damage(self, rect: Rect) -> None:
+        if self._damage_rect is None:
+            self._damage_rect = rect
+        else:
+            self._damage_rect = Rect.union(self._damage_rect, rect)
+        self._paint_dirty = True
+
+    def clear_paint_state(self) -> None:
+        self._paint_dirty = False
+        self._damage_rect = None
+
     def subtree_paint_dirty(self) -> bool:
         if self._paint_dirty:
             return True
@@ -71,6 +88,30 @@ class Node(ABC):
 
     def clear_layout_dirty(self) -> None:
         self._layout_dirty = False
+
+    def _has_paint_offset(self) -> bool:
+        return self.paint_dx != 0.0 or self.paint_dy != 0.0
+
+    def _paint_container(self, painter: QPainter) -> None:
+        """Row/Column：有 paint_dx/dy 时平移整棵子树（任务行动画需要）。"""
+        from .theme import fill_canvas_rect
+
+        children = getattr(self, "children", ())
+        if self._has_paint_offset():
+            painter.save()
+            painter.translate(self.paint_dx, self.paint_dy)
+            fill_canvas_rect(painter, self.rect)
+            for child in children:
+                child.paint(painter)
+            painter.restore()
+            return
+        fill_canvas_rect(painter, self.paint_rect)
+        for child in children:
+            child.paint(painter)
+
+    def _clear_subtree_paint_dirty(self) -> None:
+        for node in self.iter_subtree():
+            node.clear_paint_state()
 
     def paint_region(
         self,
@@ -87,21 +128,34 @@ class Node(ABC):
         if children:
             if not self.subtree_paint_dirty():
                 return
-            inter = self.paint_rect.intersect(region)
-            if inter is not None:
-                from .theme import fill_canvas_rect
-
-                fill_canvas_rect(painter, inter)
+            if self._has_paint_offset():
+                if self.paint_rect.intersects(region):
+                    self.paint(painter)
+                    self._clear_subtree_paint_dirty()
+                    if stats is not None:
+                        for n in self.iter_subtree():
+                            if not getattr(n, "children", None):
+                                stats["nodes"] += 1
+                return
+            if self._paint_dirty and self.paint_rect.intersects(region):
+                # 容器 dirty 时整棵子树重画（动画结束 offset 归零时子叶可能未 dirty）
+                self.paint(painter)
+                self._clear_subtree_paint_dirty()
+                if stats is not None:
+                    for n in self.iter_subtree():
+                        if not getattr(n, "children", None):
+                            stats["nodes"] += 1
+                return
             for child in children:
                 child.paint_region(painter, region, stats=stats)
             if self._paint_dirty:
-                self._paint_dirty = False
+                self.clear_paint_state()
             return
 
         if not self._paint_dirty:
             return
         self.paint(painter)
-        self._paint_dirty = False
+        self.clear_paint_state()
         if stats is not None:
             stats["nodes"] += 1
 

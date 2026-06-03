@@ -47,9 +47,6 @@ class ScrollView(UiScope, Node):
         self.scroll_y += dy
         self._clamp_scroll()
         self.mark_paint_dirty()
-        # 滚动改变视口偏移，内容必须重画；否则 paint_region 因子节点未 dirty 而跳过
-        for node in self.child.iter_subtree():
-            node.mark_paint_dirty()
 
     def measure(self, constraints: Constraints) -> Size:
         inner_w = max(0.0, constraints.max_width)
@@ -111,14 +108,18 @@ class ScrollView(UiScope, Node):
         painter.save()
         painter.setClipRect(int(vr.x), int(vr.y), int(vr.width), int(vr.height))
         painter.translate(0, -self.scroll_y)
-        content_region = Rect(
-            inter.x, inter.y + self.scroll_y, inter.width, inter.height
-        )
         if self.child is not None:
-            self.child.paint_region(painter, content_region, stats=stats)
+            # 视口内任意子项 dirty 时整段重画，避免只画 dirty 行导致列表被擦没
+            self.child.paint(painter)
+            if stats is not None:
+                for n in self.child.iter_subtree():
+                    if not getattr(n, "children", None):
+                        stats["nodes"] += 1
         painter.restore()
-        if self._paint_dirty:
-            self._paint_dirty = False
+        if self.child is not None:
+            for node in self.child.iter_subtree():
+                node.clear_paint_state()
+        self.clear_paint_state()
 
     def hit_test(self, x: float, y: float) -> Node | None:
         if not self.rect.contains(x, y) or self.child is None:

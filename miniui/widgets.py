@@ -129,6 +129,7 @@ class Box(Node):
             int(r.x), int(r.y), int(r.width), int(r.height), radius, radius
         )
         if self.label:
+            painter.setFont(QFont(theme.fonts.family, theme.fonts.size_body))
             painter.setPen(QColor(theme.colors.box_label))
             painter.drawText(int(r.x + 8), int(r.y + 20), self.label)
 

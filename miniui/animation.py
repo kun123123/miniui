@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation, pyqtProperty
 
+from .geometry import Rect
+
 if TYPE_CHECKING:
     from .canvas import UiCanvas
     from .node import Node
@@ -42,9 +44,13 @@ def animate_float(
     """对 node.paint_dx / paint_dy 做属性动画，每帧触发 canvas.update()。"""
 
     def apply(v: float) -> None:
+        old_paint = canvas._node_screen_rect(node)
+        slot = canvas._node_layout_screen_rect(node)
         setattr(node, attr, v)
-        node.mark_paint_dirty()
-        canvas.update()
+        new_paint = canvas._node_screen_rect(node)
+        # 轨迹 + layout 槽位，避免滑入时槽位留白线
+        node.merge_damage(Rect.union(Rect.union(slot, old_paint), new_paint))
+        canvas._flush_repaint()
 
     target = _FloatAnimTarget(start, apply)
     anim = QPropertyAnimation(target, b"value")
