@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtGui import QPainter
 
 from .constraints import Constraints
+from .flex import apply_flex, content_main, measure_children
 from .geometry import Rect, Size
 from .node import Node
 
@@ -17,8 +18,10 @@ class Row(Node):
         padding: float = 0,
         spacing: float = 0,
         align: str = "start",
+        flex: float = 0,
+        margin: float = 0,
     ) -> None:
-        super().__init__()
+        super().__init__(flex=flex, margin=margin)
         self.children = children or []
         self.padding = padding
         self.spacing = spacing
@@ -31,17 +34,22 @@ class Row(Node):
         inner_w = max(0.0, constraints.max_width - 2 * self.padding)
         inner_h = max(0.0, constraints.max_height - 2 * self.padding)
 
-        self._child_sizes = []
-        max_h = 0.0
-        total_w = 0.0
-        for i, child in enumerate(self.children):
-            child_c = Constraints.loose(inner_w, inner_h)
-            size = child.measure(child_c)
-            self._child_sizes.append(size)
-            max_h = max(max_h, size.height)
-            total_w += size.width
-            if i < len(self.children) - 1:
-                total_w += self.spacing
+        self._child_sizes = measure_children(
+            self.children,
+            axis="horizontal",
+            inner_cross=inner_h,
+            inner_main=inner_w,
+            spacing=self.spacing,
+        )
+        max_h = max((s.height for s in self._child_sizes), default=0.0)
+
+        has_flex = any(c.flex > 0 for c in self.children)
+        if has_flex:
+            total_w = inner_w
+        else:
+            total_w = content_main(
+                self.children, self._child_sizes, axis="horizontal", spacing=self.spacing
+            )
 
         return Size(
             min(constraints.max_width, total_w + 2 * self.padding),
@@ -52,20 +60,39 @@ class Row(Node):
         self.rect = rect
         inner_x = rect.x + self.padding
         inner_y = rect.y + self.padding
+        inner_w = max(0.0, rect.width - 2 * self.padding)
         inner_h = max(0.0, rect.height - 2 * self.padding)
 
+        sizes = list(self._child_sizes)
+        if any(c.flex > 0 for c in self.children):
+            sizes = apply_flex(
+                self.children,
+                sizes,
+                axis="horizontal",
+                inner_main=inner_w,
+                spacing=self.spacing,
+            )
+
         x = inner_x
-        for child, size in zip(self.children, self._child_sizes):
+        n = len(self.children)
+        for i, (child, size) in enumerate(zip(self.children, sizes)):
+            w = size.width
+            h = size.height
+            if self.align == "stretch":
+                h = inner_h
+            max_w = max(0.0, inner_x + inner_w - x)
+            if i == n - 1:
+                w = min(w, max_w)
+            else:
+                w = min(w, max(0.0, max_w - self.spacing))
+
             child_y = inner_y
             if self.align == "center":
-                child_y = inner_y + (inner_h - size.height) / 2
-            elif self.align == "stretch":
-                child.layout(Rect(x, inner_y, size.width, inner_h))
-                x += size.width + self.spacing
-                continue
+                child_y = inner_y + (inner_h - h) / 2
 
-            child.layout(Rect(x, child_y, size.width, size.height))
-            x += size.width + self.spacing
+            child._layout_with_margin(Rect(x, child_y, w, h))
+            if i < n - 1:
+                x += w + self.spacing
 
     def paint(self, painter: QPainter) -> None:
         for child in self.children:

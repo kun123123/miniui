@@ -1,56 +1,70 @@
 # MiniUI
 
-用 **PyQt6 自绘** 实现的最小 UI 教学框架，帮助理解：
+PyQt6 自绘 UI 教学框架。原理与细节见博客：[MiniUI：从零理解渲染树、布局与绘制](https://nimble-cocada-736242.netlify.app/category/gui/miniui-framework/)（本地 `blog/src/content/blog/miniui-framework.md`）。
 
-```text
-UI 代码  →  渲染树  →  measure / layout  →  paint
-```
-
-## 快速开始
+## 安装与运行
 
 ```bash
 git clone https://github.com/kun123123/miniui.git
 cd miniui
 pip install -r requirements.txt
+```
 
+按顺序运行 demo（建议从头到尾跑一遍）：
+
+```bash
 python demos/step1_paint.py
 python demos/step2_tree.py
 python demos/step3_column.py
 python demos/step4_row.py
 python demos/step5_app.py
+python demos/step6_events.py
+python demos/step7_flex.py
+python demos/step8_dirty.py
+python demos/step9_animation.py
+python demos/step10_dynamic.py
+python demos/step11_scroll.py
+python demos/step12_todo.py
+python demos/step13_input.py
+python demos/step14_partial_paint.py
+python demos/step15_ime.py
+python demos/step16_ellipsis.py
+python demos/step17_theme.py
 ```
 
-## 五步 demo
+## Demo 一览
 
-| Step | 文件 | 学到什么 |
-|------|------|----------|
-| 1 | `demos/step1_paint.py` | `QPainter` + 手写矩形 |
-| 2 | `demos/step2_tree.py` | 渲染树、递归 `paint` → 见 `docs/02-概念.md` |
-| 3 | `demos/step3_column.py` | `Column` 自动算 `spacing` / `padding` |
-| 4 | `demos/step4_row.py` | `Row` + 嵌套 |
-| 5 | `demos/step5_app.py` | 完整 `measure → layout → paint` |
-
-自测：在 `step3_column.py` 把 `spacing=12` 改成 `24`，子块间距应变大，无需改 y 坐标。
+| 讲什么 | 文件 |
+|--------|------|
+| 手写坐标 | `demos/step1_paint.py` |
+| 渲染树 | `demos/step2_tree.py` |
+| 纵向 Column | `demos/step3_column.py` |
+| 横向 Row | `demos/step4_row.py` |
+| 完整三遍 pass | `demos/step5_app.py` |
+| 点击与按钮 | `demos/step6_events.py` |
+| flex 剩余空间 | `demos/step7_flex.py` |
+| 脏标记 | `demos/step8_dirty.py` |
+| 动画偏移 | `demos/step9_animation.py` |
+| 动态增删节点 | `demos/step10_dynamic.py` |
+| 滚动列表 | `demos/step11_scroll.py` |
+| 综合 Todo | `demos/step12_todo.py` |
+| 自绘输入框 | `demos/step13_input.py` |
+| 局部重绘 | `demos/step14_partial_paint.py` |
+| 中文输入法 | `demos/step15_ime.py` |
+| 文本省略号 | `demos/step16_ellipsis.py` |
+| 浅色 / 深色主题 | `demos/step17_theme.py` |
 
 ## 目录结构
 
 ```text
-miniui/       # geometry, node, widgets, column, row, canvas
-demos/        # step1～step5
-docs/         # 补充说明
+miniui/       # 框架核心
+demos/        # 上表 demo
+docs/         # 补充笔记，见 docs/README.md
 ```
 
-## 原理文章
+## 文档
 
-配套长文（原理对照表 + Qt 对比）见博客：[MiniUI：从零理解渲染树、布局与绘制](https://nimble-cocada-736242.netlify.app/category/gui/miniui-framework/)
-
-## 与 Qt / Flutter 对照
-
-| MiniUI | Qt | Flutter |
-|--------|-----|---------|
-| `measure` | `sizeHint()` | constraints → size |
-| `layout` | `QLayout::setGeometry` | `performLayout` |
-| `paint` | `paintEvent` | `paint` |
+- [docs/README.md](docs/README.md) — 文档索引
 
 ## License
 
