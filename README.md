@@ -2,7 +2,7 @@
 
 PyQt6 教学用自绘 UI 框架：单画布 `UiCanvas` + `Node` 渲染树，三遍 pass（`measure` → `layout` → `paint`）。
 
-- **博客长文**（原理与设计）![点击跳转](https://nimble-cocada-736242.netlify.app/)
+- **博客长文**（原理与设计）[点击跳转](https://nimble-cocada-736242.netlify.app/)
 - **独立仓库**：[github.com/kun123123/miniui](https://github.com/kun123123/miniui)
 
 ## 环境
