@@ -103,24 +103,17 @@ class ScrollView(UiScope, Node):
         )
         if not needs_repaint:
             return
-        content_region = Rect(
-            region.x,
-            region.y + self.scroll_y,
-            region.width,
-            region.height,
-        )
+        bg = QColor(get_theme().colors.canvas_bg)
         painter.save()
         painter.setClipRect(int(vr.x), int(vr.y), int(vr.width), int(vr.height))
+        painter.fillRect(int(vr.x), int(vr.y), int(vr.width), int(vr.height), bg)
         painter.translate(0, -self.scroll_y)
         if self.child is not None:
-            if self.child.subtree_paint_dirty():
-                self.child.paint_region(painter, content_region, stats=stats)
-            else:
-                # 视口已擦除但子树未标 dirty（如列表 rebuild 后的第二次 flush）
-                self._paint_all_children(painter)
-                self._clear_subtree_paint_dirty()
-                if stats is not None:
-                    self._count_leaf_stats(stats)
+            # 视口级 coherent 重绘：擦整块视口就画整块可见内容，避免只重绘脏行
+            self._paint_all_children(painter)
+            self._clear_subtree_paint_dirty()
+            if stats is not None:
+                self._count_leaf_stats(stats)
         painter.restore()
         self.clear_paint_state()
 

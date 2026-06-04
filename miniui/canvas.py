@@ -23,7 +23,7 @@ from .geometry import Rect
 from .node import Node
 from .scroll import ScrollView
 from .theme import Theme, pop_theme, push_theme
-from .widgets import Button, TextInput
+from .widgets import Button, TextArea, TextInput
 
 
 class UiCanvas(QWidget):
@@ -54,7 +54,7 @@ class UiCanvas(QWidget):
         self._sync_widget_background()
         self._pressed_button: Button | None = None
         self._last_event_node: Node | None = None
-        self._focused_input: TextInput | None = None
+        self._focused_input: TextInput | TextArea | None = None
         self._cursor_visible = True
         self.relayout_count = 0
         self.paint_count = 0
@@ -385,18 +385,7 @@ class UiCanvas(QWidget):
                 if not self._scroll_repaint_needed(node):
                     self._clear_stale_scroll_dirty(node)
                     continue
-                leaf_regions: list[Rect] = []
-                if node.child is not None:
-                    for child in node.child.iter_subtree():
-                        if child._damage_rect is not None:
-                            leaf_regions.append(child._damage_rect)
-                # rebuild/删行会 set_damage(整视口)；toggle 只有 leaf damage
-                if node._damage_rect is not None:
-                    regions.append(node._damage_rect)
-                    continue
-                if leaf_regions:
-                    regions.extend(leaf_regions)
-                    continue
+                # 视口内任一 dirty → 脏区取整视口，与 paint_region 全画对齐
                 regions.append(self._scroll_damage(node))
                 continue
             if not node._paint_dirty or node._damage_rect is None:
@@ -469,7 +458,7 @@ class UiCanvas(QWidget):
         self._cursor_visible = not self._cursor_visible
         self.repaint_node(self._focused_input)
 
-    def _set_focus(self, inp: TextInput | None) -> None:
+    def _set_focus(self, inp: TextInput | TextArea | None) -> None:
         if self._focused_input is inp:
             if inp is not None:
                 self.setFocus()
@@ -617,6 +606,12 @@ class UiCanvas(QWidget):
             self._repaint_scroll(scroll)
             event.accept()
             return
+        hit = self.root.hit_test(x, y)
+        if isinstance(hit, TextArea):
+            hit.scroll_by(-event.angleDelta().y() / 120.0 * 28.0)
+            self.repaint_node(hit)
+            event.accept()
+            return
         super().wheelEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -627,6 +622,9 @@ class UiCanvas(QWidget):
         if isinstance(hit, TextInput):
             self._set_focus(hit)
             hit.move_cursor_to_x(x)
+        elif isinstance(hit, TextArea):
+            self._set_focus(hit)
+            hit.move_cursor_to_point(x, y)
         elif not isinstance(hit, Button):
             self._set_focus(None)
         if isinstance(hit, Button):

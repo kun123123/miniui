@@ -39,6 +39,7 @@ class ThemeMetrics:
     input_height: float = 32
     button_height: float = 32
     input_padding_x: float = 8
+    input_padding_y: float = 6
 
 
 @dataclass(frozen=True)
