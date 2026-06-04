@@ -1,4 +1,4 @@
-"""Demo 10 · State + Bindings.list：改 State 自动重建列表。
+"""Demo 10 · State + ForEach：改 State 自动重建列表。
 
 运行（在 code/ui 目录下）：
     python demos/state.py
@@ -16,56 +16,37 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Bindings, Box, Button, Column, State, Text, Theme, UiCanvas
+from miniui import App, Box, Button, Column, DerivedText, ForEach, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
+@run(title="Demo 10 · state", size=(360, 320), theme=Theme.dark())
+class StateDemo(App):
+    def mount(self, ctx) -> None:
+        super().mount(ctx)
+        self.items = ctx.state(["苹果", "香蕉", "橙子"])
 
-    items = State(["苹果", "香蕉", "橙子"])
-    list_col = Column(spacing=8, align="stretch")
-    count_label = Text("", font_size=13)
+    def add_item(self) -> None:
+        self.items.value.append(f"第 {len(self.items.value) + 1} 项")
+        self.items.update()
 
-    def add_item() -> None:
-        items.value.append(f"第 {len(items.value) + 1} 项")
-        items.update()
+    def item_row(self, name: str):
+        return Box(height=40, label=name)
 
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
-            children=[
-                count_label,
-                list_col,
-                Button("添加一项", on_click=add_item),
+            nodes=[
+                DerivedText(
+                    lambda: f"共 {len(self.items.value)} 项",
+                    deps=[self.items],
+                    font_size=13,
+                ),
+                ForEach(self.items, self.item_row, spacing=8, scroll=False),
+                Button("添加一项", on_click=self.add_item),
             ],
-        ),
-    )
-
-    bindings = Bindings(canvas)
-    bindings.text(count_label, lambda: f"共 {len(items.value)} 项", items)
-    bindings.list(
-        list_col,
-        lambda: items.value,
-        lambda name: Box(height=40, label=name),
-        items,
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 10 · state")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(360, 320)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    StateDemo()

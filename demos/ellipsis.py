@@ -16,9 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Column, Text, Theme, UiCanvas
+from miniui import App, Column, Text, Theme, run
 
 LONG_TEXT = (
     "这是一段很长的文本，用来演示 Text 的 overflow='ellipsis'："
@@ -26,34 +24,19 @@ LONG_TEXT = (
 )
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+@run(title="Demo 08 · ellipsis", size=(480, 120), theme=Theme.dark())
+class EllipsisDemo(App):
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=16,
             align="stretch",
-            children=[
+            nodes=[
                 Text("拖动窗口变窄，观察下方长文本末尾 …", font_size=13),
                 Text(LONG_TEXT, overflow="ellipsis"),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 08 · ellipsis")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(480, 120)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    EllipsisDemo()

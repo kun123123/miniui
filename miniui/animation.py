@@ -71,6 +71,13 @@ def animate_float(
 
     def _done() -> None:
         canvas._running_anims.remove(anim)
+        # 终帧：擦掉原槽位 + 滑出后的可见区域，再交给 on_finished 删节点
+        slot = canvas._node_layout_screen_rect(node)
+        final = canvas._node_screen_rect(node)
+        node.merge_damage(Rect.union(slot, final))
+        canvas._flush_repaint(sync=False)
+        node.paint_dx = 0.0
+        node.paint_dy = 0.0
         if on_finished is not None:
             on_finished()
 

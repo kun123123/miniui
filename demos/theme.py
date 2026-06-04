@@ -1,4 +1,4 @@
-"""Demo 12 · 换肤：canvas.set_theme 切换 light / dark，整窗重绘。
+"""Demo 12 · 换肤：set_theme 切换 light / dark，整窗重绘。
 
 运行（在 code/ui 目录下）：
     python demos/theme.py
@@ -16,49 +16,36 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Button, Column, Text, Theme, UiCanvas
+from miniui import App, Box, Button, Column, DerivedText, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
+@run(title="Demo 12 · theme", size=(360, 260), theme=Theme.dark())
+class ThemeDemo(App):
+    def mount(self, ctx) -> None:
+        super().mount(ctx)
+        self.is_dark = ctx.state(True)
 
-    is_dark = [True]
-    status = Text("当前：dark", font_size=14)
+    def toggle_theme(self) -> None:
+        self.is_dark.set(not self.is_dark.value)
+        self.ctx.set_theme(Theme.dark() if self.is_dark.value else Theme.light())
 
-    def toggle_theme() -> None:
-        is_dark[0] = not is_dark[0]
-        canvas.set_theme(Theme.dark() if is_dark[0] else Theme.light())
-        status.set_text(f"当前：{'dark' if is_dark[0] else 'light'}")
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
             align="stretch",
-            children=[
-                status,
+            nodes=[
+                DerivedText(
+                    lambda: f"当前：{'dark' if self.is_dark.value else 'light'}",
+                    deps=[self.is_dark],
+                    font_size=14,
+                ),
                 Box(height=48, label="主题 box_fill"),
                 Button("示例按钮"),
-                Button("切换主题", on_click=toggle_theme),
+                Button("切换主题", on_click=self.toggle_theme),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 12 · theme")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(360, 260)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    ThemeDemo()

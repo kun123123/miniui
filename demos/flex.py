@@ -15,40 +15,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Row, Theme, UiCanvas
+from miniui import App, Box, Row, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Row(
+@run(title="Demo 03 · flex", size=(480, 120), theme=Theme.dark())
+class FlexDemo(App):
+    def ui(self) -> None:
+        self.root = Row(
             padding=20,
             spacing=8,
             align="stretch",
-            children=[
+            nodes=[
                 Box(width=56, height=48, color="#ffcdd2", label="56"),
                 Box(flex=1, height=48, color="#bbdefb", label="flex=1"),
                 Box(width=72, height=48, color="#c8e6c9", label="72"),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 03 · flex")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(480, 120)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    FlexDemo()

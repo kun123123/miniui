@@ -14,16 +14,17 @@ from .node import Node
 class Column(UiScope, Node):
     def __init__(
         self,
-        children: list[Node] | None = None,
-        *,
+        *nodes: Node,
         padding: float = 0,
         spacing: float = 0,
         align: str = "start",
         flex: float = 0,
         margin: float = 0,
+        id: str | None = None,
+        children: list[Node] | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
-        self.children = children or []
+        super().__init__(flex=flex, margin=margin, id=id)
+        self.children = list(children) if children is not None else list(nodes)
         self.padding = padding
         self.spacing = spacing
         self.align = align  # start | center | stretch

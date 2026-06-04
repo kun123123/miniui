@@ -53,6 +53,7 @@ class UiCanvas(QWidget):
             self._bg = QColor(self._theme.colors.canvas_bg)
         self._sync_widget_background()
         self._pressed_button: Button | None = None
+        self._last_event_node: Node | None = None
         self._focused_input: TextInput | None = None
         self._cursor_visible = True
         self.relayout_count = 0
@@ -111,6 +112,16 @@ class UiCanvas(QWidget):
         else:
             self.update()
 
+    def _scroll_content_layout_dirty(self, node: Node) -> bool:
+        cur: Node | None = node
+        while cur is not None:
+            if cur._layout_dirty:
+                return True
+            if isinstance(cur, ScrollView):
+                break
+            cur = cur.parent
+        return False
+
     def _resolve_dirty_damage(self) -> None:
         """
         统一为 dirty 且无 damage 的节点计算屏幕 damage。
@@ -132,16 +143,23 @@ class UiCanvas(QWidget):
 
             scroll = self._enclosing_scroll(node)
             if scroll is not None and node is not scroll:
-                sid = id(scroll)
-                if sid not in seen_scrolls:
-                    scroll.set_damage(self._node_screen_rect(scroll))
-                    seen_scrolls.add(sid)
+                if self._scroll_content_layout_dirty(node):
+                    sid = id(scroll)
+                    if sid not in seen_scrolls:
+                        scroll.set_damage(self._node_screen_rect(scroll))
+                        seen_scrolls.add(sid)
+                else:
+                    node.set_damage(self._node_screen_rect(node))
                 continue
 
-            node.set_damage(self._node_screen_rect(node))
+            screen = self._node_screen_rect(node)
+            if isinstance(node, (TextInput, Button)):
+                node.set_damage(self._border_damage(node, screen))
+            else:
+                node.set_damage(screen)
 
     def _process_scheduled_updates(self) -> None:
-        if self.root._layout_dirty or self._needs_relayout:
+        if self.root.subtree_layout_dirty() or self._needs_relayout:
             self.relayout()
             self._needs_relayout = False
         self._flush_repaint(sync=False)
@@ -175,6 +193,21 @@ class UiCanvas(QWidget):
     def _rect_changed(a: Rect, b: Rect) -> bool:
         return a.x != b.x or a.y != b.y or a.width != b.width or a.height != b.height
 
+    _BORDER_DAMAGE_PAD = 2.0  # 圆角描边 + AA 会超出 layout 矩形
+
+    @classmethod
+    def _inflate_damage(cls, r: Rect) -> Rect:
+        p = cls._BORDER_DAMAGE_PAD
+        return Rect(r.x - p, r.y - p, r.width + 2 * p, r.height + 2 * p)
+
+    def _border_damage(self, node: Node, screen: Rect) -> Rect:
+        """带描边的控件：damage 外扩，并与上次绘制位置取并集，避免旧边框残留。"""
+        dmg = self._inflate_damage(screen)
+        last = getattr(node, "_last_painted_screen", None)
+        if last is not None:
+            dmg = Rect.union(dmg, self._inflate_damage(last))
+        return dmg
+
     def _layout_screen_rect(self, node: Node, rect: Rect) -> Rect:
         """layout rect 转屏幕坐标（ScrollView 内减 scroll_y）。"""
         r = rect
@@ -194,7 +227,7 @@ class UiCanvas(QWidget):
 
     def relayout(self, *, force: bool = False) -> None:
         """仅当根节点 layout_dirty（或 force）时执行 measure + layout。"""
-        if not force and not self.root._layout_dirty:
+        if not force and not self.root.subtree_layout_dirty():
             return
         old_layout: dict[int, Rect] = {}
         for node in self.root.iter_subtree():
@@ -225,14 +258,28 @@ class UiCanvas(QWidget):
                     node.clear_paint_state()
                 continue
             if prev is None or self._rect_changed(prev, cur):
+                new_s = self._layout_screen_rect(node, cur)
                 if prev is not None:
                     old_s = self._layout_screen_rect(node, prev)
-                    new_s = self._layout_screen_rect(node, cur)
-                    node.set_damage(Rect.union(old_s, new_s))
+                    if isinstance(node, (TextInput, Button)):
+                        node.set_damage(
+                            Rect.union(
+                                self._border_damage(node, old_s),
+                                self._border_damage(node, new_s),
+                            )
+                        )
+                    else:
+                        node.set_damage(Rect.union(old_s, new_s))
+                elif isinstance(node, (TextInput, Button)):
+                    node.set_damage(self._border_damage(node, new_s))
                 else:
-                    node.set_damage(self._layout_screen_rect(node, cur))
+                    node.set_damage(new_s)
             elif node._paint_dirty:
-                node.set_damage(self._layout_screen_rect(node, cur))
+                screen = self._layout_screen_rect(node, cur)
+                if isinstance(node, (TextInput, Button)):
+                    node.set_damage(self._border_damage(node, screen))
+                else:
+                    node.set_damage(screen)
             else:
                 node.clear_paint_state()
         self.relayout_count += 1
@@ -244,7 +291,7 @@ class UiCanvas(QWidget):
 
     def paintEvent(self, event) -> None:
         self.paint_count += 1
-        if self.root._layout_dirty:
+        if self.root.subtree_layout_dirty():
             self.relayout()
         if self._focused_input is not None:
             self._focused_input._cursor_visible = self._cursor_visible
@@ -273,7 +320,7 @@ class UiCanvas(QWidget):
     def _is_full_repaint(self, dirty: Rect) -> bool:
         if not self.root.subtree_paint_dirty():
             return True
-        if self.root._layout_dirty:
+        if self.root.subtree_layout_dirty():
             return True
         w, h = float(self.width()), float(self.height())
         if w <= 0 or h <= 0:
@@ -327,10 +374,6 @@ class UiCanvas(QWidget):
             node.clear_paint_state()
 
     def _collect_dirty_damage_regions(self) -> list[Rect]:
-        """
-        每个 dirty 节点各自一块擦除区（精确 rect，不合并、不扩父、不加 pad）。
-        ScrollView 视口单独一块；Scroll 内叶节点 damage 不参与并集。
-        """
         regions: list[Rect] = []
         seen_scrolls: set[int] = set()
 
@@ -339,10 +382,22 @@ class UiCanvas(QWidget):
                 if id(node) in seen_scrolls:
                     continue
                 seen_scrolls.add(id(node))
-                if self._scroll_repaint_needed(node):
-                    regions.append(self._scroll_damage(node))
-                else:
+                if not self._scroll_repaint_needed(node):
                     self._clear_stale_scroll_dirty(node)
+                    continue
+                leaf_regions: list[Rect] = []
+                if node.child is not None:
+                    for child in node.child.iter_subtree():
+                        if child._damage_rect is not None:
+                            leaf_regions.append(child._damage_rect)
+                # rebuild/删行会 set_damage(整视口)；toggle 只有 leaf damage
+                if node._damage_rect is not None:
+                    regions.append(node._damage_rect)
+                    continue
+                if leaf_regions:
+                    regions.extend(leaf_regions)
+                    continue
+                regions.append(self._scroll_damage(node))
                 continue
             if not node._paint_dirty or node._damage_rect is None:
                 continue
@@ -530,7 +585,7 @@ class UiCanvas(QWidget):
 
     def repaint_node(self, node: Node, *, sync: bool = True) -> None:
         """请求重绘指定节点（flush 前由 _resolve_dirty_damage 统一算 damage）。"""
-        if self.root._layout_dirty:
+        if self.root.subtree_layout_dirty():
             self.relayout()
         node._paint_dirty = True
         self._flush_repaint(sync=sync)
@@ -572,11 +627,12 @@ class UiCanvas(QWidget):
         if isinstance(hit, TextInput):
             self._set_focus(hit)
             hit.move_cursor_to_x(x)
-        else:
+        elif not isinstance(hit, Button):
             self._set_focus(None)
         if isinstance(hit, Button):
             hit.pressed = True
             self._pressed_button = hit
+            self._last_event_node = hit
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -585,9 +641,12 @@ class UiCanvas(QWidget):
         self._pressed_button = None
         if btn is not None:
             btn.pressed = False
-            hit = self.root.hit_test(x, y)
-            if hit is btn and btn.on_click is not None:
-                btn.on_click()
+            screen = self._node_screen_rect(btn)
+            if screen.contains(x, y) and btn.on_click is not None:
+                if self._focused_input is not None:
+                    self._set_focus(None)
+                fn = btn.on_click
+                QTimer.singleShot(0, fn)
         event.accept()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

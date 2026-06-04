@@ -16,39 +16,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Row, Spacer, Theme, UiCanvas
+from miniui import App, Box, Row, Spacer, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Row(
+@run(title="Demo 05 · spacer", size=(480, 100), theme=Theme.dark())
+class SpacerDemo(App):
+    def ui(self) -> None:
+        self.root = Row(
             padding=20,
             align="center",
-            children=[
+            nodes=[
                 Box(width=80, height=44, color="#ffab91", label="左"),
                 Spacer(flex=1),
                 Box(width=80, height=44, color="#80cbc4", label="右"),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 05 · spacer")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(480, 100)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    SpacerDemo()

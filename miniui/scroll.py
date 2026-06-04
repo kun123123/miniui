@@ -18,8 +18,9 @@ class ScrollView(UiScope, Node):
         *,
         flex: float = 0,
         margin: float = 0,
+        id: str | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
+        super().__init__(flex=flex, margin=margin, id=id)
         self.child: Node | None = None
         self.scroll_y = 0.0
         self._content_height = 0.0
@@ -93,22 +94,35 @@ class ScrollView(UiScope, Node):
         *,
         stats: dict[str, int] | None = None,
     ) -> None:
-        """ScrollView：方案一 — 擦除已在 canvas 完成，此处只 paint 全部子节点。"""
         vr = self.rect
         if not vr.intersects(region):
             return
-        if not self.subtree_paint_dirty():
+        needs_repaint = (
+            self.subtree_paint_dirty()
+            or self._damage_rect is not None
+        )
+        if not needs_repaint:
             return
-        if vr.intersect(region) is None:
-            return
+        content_region = Rect(
+            region.x,
+            region.y + self.scroll_y,
+            region.width,
+            region.height,
+        )
         painter.save()
         painter.setClipRect(int(vr.x), int(vr.y), int(vr.width), int(vr.height))
         painter.translate(0, -self.scroll_y)
-        self._paint_all_children(painter)
+        if self.child is not None:
+            if self.child.subtree_paint_dirty():
+                self.child.paint_region(painter, content_region, stats=stats)
+            else:
+                # 视口已擦除但子树未标 dirty（如列表 rebuild 后的第二次 flush）
+                self._paint_all_children(painter)
+                self._clear_subtree_paint_dirty()
+                if stats is not None:
+                    self._count_leaf_stats(stats)
         painter.restore()
-        if stats is not None:
-            self._count_leaf_stats(stats)
-        self._clear_subtree_paint_dirty()
+        self.clear_paint_state()
 
     def hit_test(self, x: float, y: float) -> Node | None:
         if not self.rect.contains(x, y) or self.child is None:

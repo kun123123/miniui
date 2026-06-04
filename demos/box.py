@@ -16,20 +16,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Column, Theme, UiCanvas
+from miniui import App, Box, Column, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+@run(title="Demo 06 · box", size=(320, 240), theme=Theme.dark())
+class BoxDemo(App):
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
-            children=[
+            nodes=[
                 Box(
                     width=220,
                     height=52,
@@ -45,21 +41,8 @@ def main() -> None:
                 ),
                 Box(width=220, height=52, label="theme default"),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 06 · box")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(320, 240)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    BoxDemo()

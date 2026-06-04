@@ -24,12 +24,38 @@ if TYPE_CHECKING:
     from PyQt6.QtGui import QPainter
 
 
+def _is_layout_container(node: Node) -> bool:
+    """Row / Column 是布局容器；ScrollView 只是视口，不算。"""
+    return type(node).__name__ in ("Row", "Column")
+
+
+def _layout_change_affects_flex_siblings(child: Node, parent: Node) -> bool:
+    """子容器主轴尺寸变化时，是否需要父 Row/Column 重新分配 flex。"""
+    siblings = getattr(parent, "children", ())
+    if not siblings:
+        return False
+    if child.flex > 0:
+        return True
+    return any(s.flex > 0 for s in siblings)
+
+
 class Node(ABC):
-    def __init__(self, *, flex: float = 0, margin: float = 0) -> None:
+    def __init__(
+        self,
+        *,
+        flex: float = 0,
+        margin: float = 0,
+        id: str | None = None,
+    ) -> None:
         self.rect = Rect(0, 0, 0, 0)
         self.parent: Node | None = None
         self.flex = flex
         self.margin = margin
+        self.ui_id: str | None = id
+        self._id_map: dict[str, Node] | None = None
+        from .registry import bind_ui_id
+
+        bind_ui_id(self, id)
         self._layout_dirty = True
         self._paint_dirty = True
         self._damage_rect: Rect | None = None
@@ -39,6 +65,12 @@ class Node(ABC):
         from .builder import auto_mount
 
         auto_mount(self)
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other if isinstance(other, Node) else NotImplemented
 
     def _find_canvas(self):
         node: Node | None = self
@@ -66,27 +98,48 @@ class Node(ABC):
         self.mark_paint_dirty()
 
     def mark_layout_dirty(self) -> None:
-        """尺寸/结构可能变化：向上冒泡 layout_dirty；仅本节点 mark paint_dirty。"""
+        """尺寸/结构变化：冒泡到最近 Row/Column；若影响 flex 兄弟则继续向父布局容器上升。"""
         self._layout_dirty = True
         self._paint_dirty = True
-        if self.parent is not None:
-            if not self.parent._layout_dirty:
-                self.parent._mark_layout_dirty_upstream()
-        else:
-            canvas = self._find_canvas()
-            if canvas is not None:
-                canvas._schedule_relayout()
 
-    def _mark_layout_dirty_upstream(self) -> None:
-        """祖先只标 layout_dirty，不标 paint_dirty（方案一容器不重画自身）。"""
-        self._layout_dirty = True
-        if self.parent is not None:
-            if not self.parent._layout_dirty:
-                self.parent._mark_layout_dirty_upstream()
+        container: Node | None = None
+        if _is_layout_container(self):
+            container = self
         else:
-            canvas = self._find_canvas()
-            if canvas is not None:
-                canvas._schedule_relayout()
+            p = self.parent
+            while p is not None:
+                if _is_layout_container(p):
+                    container = p
+                    break
+                p = p.parent
+
+        if container is None:
+            self._schedule_layout_pass()
+            return
+
+        container._layout_dirty = True
+        current = container
+
+        while True:
+            parent = current.parent
+            while parent is not None and not _is_layout_container(parent):
+                parent = parent.parent
+            if parent is None:
+                break
+            if not _layout_change_affects_flex_siblings(current, parent):
+                break
+            parent._layout_dirty = True
+            for s in getattr(parent, "children", ()):
+                if s is not current and s.flex > 0:
+                    s._layout_dirty = True
+            current = parent
+
+        self._schedule_layout_pass()
+
+    def _schedule_layout_pass(self) -> None:
+        canvas = self._find_canvas()
+        if canvas is not None:
+            canvas._schedule_relayout()
 
     def mark_paint_dirty(self) -> None:
         """仅外观变化（如按下态），不触发布局；已挂载画布时自动排队重绘。"""
@@ -116,6 +169,14 @@ class Node(ABC):
             return True
         for child in getattr(self, "children", ()):
             if child.subtree_paint_dirty():
+                return True
+        return False
+
+    def subtree_layout_dirty(self) -> bool:
+        if self._layout_dirty:
+            return True
+        for child in getattr(self, "children", ()):
+            if child.subtree_layout_dirty():
                 return True
         return False
 

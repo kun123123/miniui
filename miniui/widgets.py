@@ -29,12 +29,18 @@ class Text(Node):
         flex: float = 0,
         margin: float = 0,
         overflow: OverflowMode = "visible",
+        id: str | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
+        super().__init__(flex=flex, margin=margin, id=id)
         self._text = text
         self.font_size = font_size
         self.bold = bold
         self.overflow = overflow
+        self._font_key: tuple[str, int, bool] | None = None
+        self._cached_font: QFont | None = None
+        self._cached_fm: QFontMetrics | None = None
+        self._display_key: tuple[str, int, str] | None = None
+        self._display_value: str = text
 
     @property
     def text(self) -> str:
@@ -45,22 +51,54 @@ class Text(Node):
         if self._text == value:
             return
         self._text = value
+        self._display_key = None
         self.mark_layout_dirty()
 
     def _font(self) -> QFont:
         theme = get_theme()
-        font = QFont(theme.fonts.family, self.font_size)
-        font.setBold(self.bold)
-        return font
+        key = (theme.fonts.family, self.font_size, self.bold)
+        if self._font_key != key:
+            font = QFont(theme.fonts.family, self.font_size)
+            font.setBold(self.bold)
+            self._font_key = key
+            self._cached_font = font
+            self._cached_fm = QFontMetrics(font)
+        return self._cached_font
+
+    def _fm(self) -> QFontMetrics:
+        self._font()
+        assert self._cached_fm is not None
+        return self._cached_fm
+
+    def _display_for_paint(self) -> str:
+        w = int(self.rect.width)
+        key = (self._text, w, self.overflow)
+        if self._display_key == key:
+            return self._display_value
+        display = fit_text_to_width(self._fm(), self._text, float(w), self.overflow)
+        self._display_key = key
+        self._display_value = display
+        return display
+
+    def warm_display(self, *extra_texts: str) -> None:
+        """启动时预热 ellipsis 度量，避免首次 toggle 在 paint 里算长串。"""
+        w = self.rect.width
+        if w <= 0:
+            return
+        fm = self._fm()
+        fit_text_to_width(fm, self._text, w, self.overflow)
+        for t in extra_texts:
+            fit_text_to_width(fm, t, w, self.overflow)
 
     def measure(self, constraints: Constraints) -> Size:
-        fm = QFontMetrics(self._font())
+        fm = self._fm()
         w = min(float(fm.horizontalAdvance(self._text)), constraints.max_width)
         h = float(fm.height())
         return Size(w, h)
 
     def layout(self, rect: Rect) -> None:
         self.rect = rect
+        self._display_key = None
 
     def set_text(self, text: str) -> None:
         self.text = text
@@ -69,10 +107,10 @@ class Text(Node):
         theme = get_theme()
         painter.setFont(self._font())
         painter.setPen(QColor(theme.colors.text_primary))
-        fm = QFontMetrics(self._font())
+        fm = self._fm()
         r = self.paint_rect
         baseline = r.y + (r.height + fm.ascent() - fm.descent()) / 2
-        display = fit_text_to_width(fm, self._text, r.width, self.overflow)
+        display = self._display_for_paint()
         painter.drawText(QPointF(r.x, baseline), display)
 
     def dump(self, indent: int = 0) -> str:
@@ -97,13 +135,25 @@ class Box(Node):
         label: str = "",
         flex: float = 0,
         margin: float = 0,
+        id: str | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
+        super().__init__(flex=flex, margin=margin, id=id)
         self.fixed_width = width
         self.fixed_height = height
         self._custom_color = color
         self._custom_radius = radius
         self.label = label
+
+    @property
+    def color(self) -> str | None:
+        return self._custom_color
+
+    @color.setter
+    def color(self, value: str | None) -> None:
+        if self._custom_color == value:
+            return
+        self._custom_color = value
+        self.mark_paint_dirty()
 
     def measure(self, constraints: Constraints) -> Size:
         if self.fixed_width is not None:
@@ -161,8 +211,9 @@ class Button(Node):
         on_click: Callable[[], None] | None = None,
         flex: float = 0,
         margin: float = 0,
+        id: str | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
+        super().__init__(flex=flex, margin=margin, id=id)
         self._label = label
         self.min_width = min_width
         self.height = height
@@ -177,8 +228,15 @@ class Button(Node):
     def label(self, value: str) -> None:
         if self._label == value:
             return
+        theme = get_theme()
+        fm = QFontMetrics(QFont(theme.fonts.family, theme.fonts.size_body))
+        old_w = max(self.min_width, float(fm.horizontalAdvance(self._label) + 24))
+        new_w = max(self.min_width, float(fm.horizontalAdvance(value) + 24))
         self._label = value
-        self.mark_layout_dirty()
+        if old_w == new_w:
+            self.mark_paint_dirty()
+        else:
+            self.mark_layout_dirty()
 
     @property
     def pressed(self) -> bool:
@@ -220,6 +278,11 @@ class Button(Node):
             self._label,
         )
 
+        canvas = self._find_canvas()
+        if canvas is not None:
+            sr = canvas._node_screen_rect(self)
+            self._last_painted_screen = Rect(sr.x, sr.y, sr.width, sr.height)
+
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
         r = self.rect
@@ -242,8 +305,9 @@ class TextInput(Node):
         flex: float = 0,
         margin: float = 0,
         on_submit: Callable[[], None] | None = None,
+        id: str | None = None,
     ) -> None:
-        super().__init__(flex=flex, margin=margin)
+        super().__init__(flex=flex, margin=margin, id=id)
         self._text = text
         self.placeholder = placeholder
         self.height = height
@@ -264,7 +328,7 @@ class TextInput(Node):
             return
         self._text = value
         self._cursor = max(0, min(self._cursor, len(value)))
-        self.mark_layout_dirty()
+        self.mark_paint_dirty()
 
     @property
     def cursor(self) -> int:
@@ -471,6 +535,11 @@ class TextInput(Node):
                 int(cx), int(r.y + 6), int(cx), int(r.y + r.height - 6)
             )
 
+        canvas = self._find_canvas()
+        if canvas is not None:
+            sr = canvas._node_screen_rect(self)
+            self._last_painted_screen = Rect(sr.x, sr.y, sr.width, sr.height)
+
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent
         r = self.rect
@@ -483,8 +552,8 @@ class TextInput(Node):
 class Spacer(Node):
     """弹性空白：配合 flex 吃掉剩余主轴空间，不绘制任何内容。"""
 
-    def __init__(self, *, flex: float = 1, margin: float = 0) -> None:
-        super().__init__(flex=flex, margin=margin)
+    def __init__(self, *, flex: float = 1, margin: float = 0, id: str | None = None) -> None:
+        super().__init__(flex=flex, margin=margin, id=id)
 
     def measure(self, constraints: Constraints) -> Size:
         return Size.zero()

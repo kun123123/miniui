@@ -15,43 +15,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Button, Column, Text, Theme, UiCanvas
+from miniui import App, Button, Column, Text, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
+@run(title="Demo 02 · button", size=(360, 160), theme=Theme.dark())
+class ButtonDemo(App):
+    def on_click(self) -> None:
+        self.ctx.label.set_text("已点击")
 
-    label = Text("点下面按钮", font_size=16)
-
-    def on_click() -> None:
-        label.set_text("已点击")
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
-            children=[
-                label,
-                Button("点我", on_click=on_click),
+            nodes=[
+                Text("点下面按钮", font_size=16, id="label"),
+                Button("点我", on_click=self.on_click),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 02 · button")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(360, 160)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    ButtonDemo()

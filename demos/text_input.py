@@ -16,45 +16,33 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Column, Text, TextInput, Theme, UiCanvas
+from miniui import App, Column, Text, TextInput, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
+@run(title="Demo 07 · text_input", size=(400, 140), theme=Theme.dark())
+class TextInputDemo(App):
+    def submit(self) -> None:
+        self.ctx.hint.set_text(f"提交：{self.ctx.draft.text!r}")
 
-    hint = Text("", font_size=13)
+    def on_ready(self) -> None:
+        self.ctx.canvas._set_focus(self.ctx.draft)
 
-    draft = TextInput("", placeholder="在此输入，回车提交…", min_width=200)
-
-    def submit() -> None:
-        hint.set_text(f"提交：{draft.text!r}")
-
-    draft.on_submit = submit
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
-            children=[draft, hint],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 07 · text_input")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(400, 140)
-    window.show()
-    canvas.relayout(force=True)
-    canvas._set_focus(draft)
-    sys.exit(app.exec())
+            nodes=[
+                TextInput(
+                    "",
+                    placeholder="在此输入，回车提交…",
+                    min_width=200,
+                    id="draft",
+                    on_submit=self.submit,
+                ),
+                Text("", font_size=13, id="hint"),
+            ],
+        )
 
 
 if __name__ == "__main__":
-    main()
+    TextInputDemo()

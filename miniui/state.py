@@ -49,6 +49,9 @@ class Bindings:
     def __init__(self, canvas: UiCanvas) -> None:
         self.canvas = canvas
 
+    def _queue_canvas_update(self) -> None:
+        self.canvas._schedule_update()
+
     def text(
         self,
         node: Text,
@@ -56,7 +59,17 @@ class Bindings:
         *states: State,
     ) -> None:
         def apply() -> None:
-            node.set_text(getter())
+            value = getter()
+            if node._text == value:
+                return
+            node._text = value
+            node._display_key = None
+            if getattr(node, "_derived_paint_only", False):
+                node.mark_paint_dirty()
+            elif node.flex > 0 or node.overflow != "visible":
+                node.mark_paint_dirty()
+            else:
+                node.mark_layout_dirty()
 
         for st in states:
             st.subscribe(apply)
@@ -70,22 +83,44 @@ class Bindings:
         *states: State,
         scroll: ScrollView | None = None,
         empty: str = "（没有匹配的任务）",
+        updater: Callable[[Node, object], None] | None = None,
     ) -> None:
-        def refresh() -> None:
+        def _attach_item(row: Node, item: object) -> None:
+            row._foreach_item = item
+
+        def _full_rebuild(data: list) -> None:
             for child in list(column.children):
                 column.remove_child(child)
-            data = getter()
             if data:
                 for item in data:
-                    column.add_child(builder(item))
+                    row = builder(item)
+                    _attach_item(row, item)
+                    column.add_child(row)
             else:
                 column.add_child(Text(empty, font_size=13))
             if scroll is not None:
                 scroll.scroll_y = 0.0
                 scroll._clamp_scroll()
                 scroll.set_damage(self.canvas._node_screen_rect(scroll))
-            self.canvas.relayout()
-            self.canvas.request_repaint()
+            self._queue_canvas_update()
+
+        def _same_structure(data: list) -> bool:
+            children = column.children
+            if len(children) != len(data):
+                return False
+            return all(
+                getattr(children[i], "_foreach_item", None) is data[i]
+                for i in range(len(data))
+            )
+
+        def refresh() -> None:
+            data = getter()
+            if data and updater is not None and _same_structure(data):
+                for row, item in zip(column.children, data):
+                    updater(row, item)
+                self._queue_canvas_update()
+                return
+            _full_rebuild(data)
 
         for st in states:
             st.subscribe(refresh)

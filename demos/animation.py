@@ -16,57 +16,42 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Button, Column, Text, Theme, UiCanvas
+from miniui import App, Box, Button, Column, Text, Theme, run
 
 SLIDE = 100.0
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
+@run(title="Demo 11 · animation", size=(400, 200), theme=Theme.dark())
+class AnimationDemo(App):
+    def mount(self, ctx) -> None:
+        super().mount(ctx)
+        self.busy = False
 
-    box = Box(height=56, color="#90caf9", label="paint_dx")
-    busy = [False]
-
-    def toggle() -> None:
-        if busy[0]:
+    def toggle(self) -> None:
+        if self.busy:
             return
-        busy[0] = True
+        box = self.ctx.box
+        self.busy = True
         at_rest = abs(box.paint_dx) < 1
         dx = (0.0, SLIDE) if at_rest else (box.paint_dx, 0.0)
 
         def done() -> None:
-            busy[0] = False
+            self.busy = False
 
-        canvas.animate_offset(box, dx=dx, duration=400, on_finished=done)
+        self.ctx.animate("box", dx=dx, duration=400, on_finished=done)
 
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+    def ui(self) -> None:
+        self.root = Column(
             padding=20,
             spacing=12,
             align="stretch",
-            children=[
+            nodes=[
                 Text("点击按钮：色块滑动，布局槽位保持不动", font_size=13),
-                box,
-                Button("右移 / 复位", on_click=toggle),
+                Box(height=56, color="#90caf9", label="paint_dx", id="box"),
+                Button("右移 / 复位", on_click=self.toggle),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 11 · animation")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(400, 200)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    AnimationDemo()

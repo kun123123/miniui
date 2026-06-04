@@ -16,42 +16,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Box, Column, Theme, UiCanvas
+from miniui import App, Box, Column, Theme, run
 
 PADDING = 32
 SPACING = 24
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Column(
+@run(title="Demo 04 · padding", size=(400, 280), theme=Theme.dark())
+class PaddingDemo(App):
+    def ui(self) -> None:
+        self.root = Column(
             padding=PADDING,
             spacing=SPACING,
-            children=[
+            nodes=[
                 Box(height=48, color="#ffccbc", label=f"padding={PADDING}"),
                 Box(height=48, color="#b3e5fc", label=f"spacing={SPACING}"),
                 Box(height=48, color="#c5e1a5", label="子项 C"),
             ],
-        ),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 04 · padding")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(400, 280)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+        )
 
 
 if __name__ == "__main__":
-    main()
+    PaddingDemo()

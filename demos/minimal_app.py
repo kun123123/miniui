@@ -15,31 +15,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-
-from miniui import Text, Theme, UiCanvas
+from miniui import App, Text, Theme, run
 
 
-def main() -> None:
-    app = QApplication(sys.argv)
-
-    canvas = UiCanvas(
-        theme=Theme.dark(),
-        root=Text("MiniUI · minimal_app", font_size=20),
-    )
-
-    window = QMainWindow()
-    window.setWindowTitle("Demo 01 · minimal_app")
-    central = QWidget()
-    lay = QVBoxLayout(central)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(canvas)
-    window.setCentralWidget(central)
-    window.resize(360, 120)
-    window.show()
-    canvas.relayout(force=True)
-    sys.exit(app.exec())
+@run(title="Demo 01 · minimal_app", size=(360, 120), theme=Theme.dark())
+class MinimalApp(App):
+    def ui(self) -> None:
+        self.root = Text("MiniUI · minimal_app", font_size=20)
 
 
 if __name__ == "__main__":
-    main()
+    MinimalApp()
