@@ -226,7 +226,7 @@ class UiCanvas(QWidget):
         return not isinstance(node, ScrollView)
 
     def relayout(self, *, force: bool = False) -> None:
-        """仅当根节点 layout_dirty（或 force）时执行 measure + layout。"""
+        """子树任一 layout_dirty（或 force）时，从根整树 measure + layout。"""
         if not force and not self.root.subtree_layout_dirty():
             return
         old_layout: dict[int, Rect] = {}

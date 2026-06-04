@@ -24,21 +24,6 @@ if TYPE_CHECKING:
     from PyQt6.QtGui import QPainter
 
 
-def _is_layout_container(node: Node) -> bool:
-    """Row / Column 是布局容器；ScrollView 只是视口，不算。"""
-    return type(node).__name__ in ("Row", "Column")
-
-
-def _layout_change_affects_flex_siblings(child: Node, parent: Node) -> bool:
-    """子容器主轴尺寸变化时，是否需要父 Row/Column 重新分配 flex。"""
-    siblings = getattr(parent, "children", ())
-    if not siblings:
-        return False
-    if child.flex > 0:
-        return True
-    return any(s.flex > 0 for s in siblings)
-
-
 class Node(ABC):
     def __init__(
         self,
@@ -98,42 +83,12 @@ class Node(ABC):
         self.mark_paint_dirty()
 
     def mark_layout_dirty(self) -> None:
-        """尺寸/结构变化：冒泡到最近 Row/Column；若影响 flex 兄弟则继续向父布局容器上升。"""
-        self._layout_dirty = True
-        self._paint_dirty = True
-
-        container: Node | None = None
-        if _is_layout_container(self):
-            container = self
-        else:
-            p = self.parent
-            while p is not None:
-                if _is_layout_container(p):
-                    container = p
-                    break
-                p = p.parent
-
-        if container is None:
-            self._schedule_layout_pass()
-            return
-
-        container._layout_dirty = True
-        current = container
-
-        while True:
-            parent = current.parent
-            while parent is not None and not _is_layout_container(parent):
-                parent = parent.parent
-            if parent is None:
-                break
-            if not _layout_change_affects_flex_siblings(current, parent):
-                break
-            parent._layout_dirty = True
-            for s in getattr(parent, "children", ()):
-                if s is not current and s.flex > 0:
-                    s._layout_dirty = True
-            current = parent
-
+        """尺寸/结构变化：沿 parent 链逐级标脏直到根，触发整树 relayout。"""
+        node: Node | None = self
+        while node is not None:
+            node._layout_dirty = True
+            node._paint_dirty = True
+            node = node.parent
         self._schedule_layout_pass()
 
     def _schedule_layout_pass(self) -> None:
