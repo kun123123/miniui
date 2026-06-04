@@ -11,6 +11,8 @@ from .constraints import Constraints
 from .geometry import Rect, Size
 from .node import Node
 from .text_layout import OverflowMode, fit_text_to_width
+
+_BOX_LABEL_PAD_X = 8.0
 from .theme import get_theme
 
 
@@ -156,18 +158,18 @@ class Box(Node):
         self.mark_paint_dirty()
 
     def measure(self, constraints: Constraints) -> Size:
-        if self.fixed_width is not None:
-            w = self.fixed_width
-        elif self.flex > 0:
+        if self.flex > 0:
             w = 0.0
+            h = 0.0
+        elif self.fixed_width is not None:
+            w = self.fixed_width
         else:
             w = constraints.max_width
-        if self.fixed_height is not None:
-            h = self.fixed_height
-        elif self.flex > 0:
-            h = 0.0
-        else:
-            h = 40.0
+        if self.flex <= 0:
+            if self.fixed_height is not None:
+                h = self.fixed_height
+            else:
+                h = 40.0
         return Size(min(w, constraints.max_width), min(h, constraints.max_height))
 
     def layout(self, rect: Rect) -> None:
@@ -190,9 +192,14 @@ class Box(Node):
         painter.setBrush(fill)
         painter.drawRoundedRect(_qrectf(r), radius, radius)
         if self.label:
-            painter.setFont(QFont(theme.fonts.family, theme.fonts.size_body))
+            font = QFont(theme.fonts.family, theme.fonts.size_body)
+            painter.setFont(font)
             painter.setPen(QColor(theme.colors.box_label))
-            painter.drawText(QPointF(r.x + 8, r.y + 20), self.label)
+            max_w = max(0.0, r.width - 2 * _BOX_LABEL_PAD_X)
+            display = fit_text_to_width(
+                QFontMetrics(font), self.label, max_w, "ellipsis"
+            )
+            painter.drawText(QPointF(r.x + _BOX_LABEL_PAD_X, r.y + 20), display)
 
     def dump(self, indent: int = 0) -> str:
         pad = "  " * indent

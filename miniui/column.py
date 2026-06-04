@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtGui import QPainter
 
 from .constraints import Constraints
-from .flex import apply_flex, content_main, measure_children
+from .flex import content_main, measure_children
 from .geometry import Rect, Size
 from .builder import UiScope
 from .node import Node
@@ -80,15 +80,7 @@ class Column(UiScope, Node):
         inner_w = max(0.0, rect.width - 2 * self.padding)
         inner_h = max(0.0, rect.height - 2 * self.padding)
 
-        sizes = list(self._child_sizes)
-        if any(c.flex > 0 for c in self.children):
-            sizes = apply_flex(
-                self.children,
-                sizes,
-                axis="vertical",
-                inner_main=inner_h,
-                spacing=self.spacing,
-            )
+        sizes = self._child_sizes
 
         y = inner_y
         n = len(self.children)

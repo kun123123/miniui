@@ -21,41 +21,12 @@ def _set_main(size: Size, axis: Axis, value: float) -> Size:
     return Size(size.width, value)
 
 
-def apply_flex(
-    children: list[Node],
-    sizes: list[Size],
-    *,
-    axis: Axis,
-    inner_main: float,
-    spacing: float,
-) -> list[Size]:
-    """把主轴上的剩余空间按 flex 比例分给子节点。"""
-    n = len(children)
-    if n == 0:
-        return sizes
-
-    gap = spacing * max(0, n - 1)
-    flex_sum = sum(c.flex for c in children if c.flex > 0)
-    if flex_sum <= 0:
-        return sizes
-
-    fixed = 0.0
-    flex_used = 0.0
-    for child, size in zip(children, sizes):
-        m = _main(size, axis)
-        if child.flex > 0:
-            flex_used += m
-        else:
-            fixed += m
-
-    remaining = max(0.0, inner_main - fixed - flex_used - gap)
-    result = list(sizes)
-    for i, child in enumerate(children):
-        if child.flex <= 0:
-            continue
-        share = remaining * (child.flex / flex_sum)
-        result[i] = _set_main(result[i], axis, _main(result[i], axis) + share)
-    return result
+def _child_constraints(
+    axis: Axis, inner_main: float, inner_cross: float
+) -> Constraints:
+    if axis == "horizontal":
+        return Constraints.loose(inner_main, inner_cross)
+    return Constraints.loose(inner_cross, inner_main)
 
 
 def measure_children(
@@ -67,9 +38,11 @@ def measure_children(
     spacing: float,
 ) -> list[Size]:
     """
-    先量固定子节点，再用「剩余主轴空间」量 flex 子节点，最后 apply_flex。
+    1. 先量 flex=0 的子节点（可用 fixed width/height），占满主轴「固定」部分。
+    2. 剩余主轴长度按 flex 比例切成份额；flex>0 的子节点只在各自份额内 measure。
+    3. 主轴槽位宽度 = 份额（与 intrinsic 无关）；交叉轴取 measure 结果。
 
-    避免 flex 子节点在 measure 时占用父级全宽/全高，layout 时被压窄导致溢出。
+    flex>0 时子节点上的 fixed width/height 不参与分配（见 Box 等 measure）。
     """
     n = len(children)
     if n == 0:
@@ -82,26 +55,26 @@ def measure_children(
     for i, child in enumerate(children):
         if child.flex > 0:
             continue
-        if axis == "horizontal":
-            c = Constraints.loose(inner_main, inner_cross)
-        else:
-            c = Constraints.loose(inner_cross, inner_main)
-        sizes[i] = child._measure_with_margin(c)
+        sizes[i] = child._measure_with_margin(
+            _child_constraints(axis, inner_main, inner_cross)
+        )
         fixed_main += _main(sizes[i], axis)
 
-    flex_main = max(0.0, inner_main - fixed_main - gap)
+    flex_sum = sum(c.flex for c in children if c.flex > 0)
+    if flex_sum <= 0:
+        return sizes
+
+    remaining = max(0.0, inner_main - fixed_main - gap)
     for i, child in enumerate(children):
         if child.flex <= 0:
             continue
-        if axis == "horizontal":
-            c = Constraints.loose(flex_main, inner_cross)
-        else:
-            c = Constraints.loose(inner_cross, flex_main)
-        sizes[i] = child._measure_with_margin(c)
-
-    if any(c.flex > 0 for c in children):
-        sizes = apply_flex(
-            children, sizes, axis=axis, inner_main=inner_main, spacing=spacing
+        share = remaining * (child.flex / flex_sum)
+        measured = child._measure_with_margin(
+            _child_constraints(axis, share, inner_cross)
+        )
+        cross = measured.height if axis == "horizontal" else measured.width
+        sizes[i] = (
+            Size(share, cross) if axis == "horizontal" else Size(cross, share)
         )
     return sizes
 
