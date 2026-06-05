@@ -8,7 +8,7 @@ from .node import Node
 from .scroll import ScrollView
 from .state import Bindings, State
 from .theme import Theme, get_theme
-from .widgets import Box, Button, Spacer, Text, TextArea, TextInput
+from .widgets import Box, Button, Image, Spacer, Text, TextArea, TextInput
 
 __all__ = [
     "App",
@@ -21,6 +21,7 @@ __all__ = [
     "Constraints",
     "DerivedText",
     "ForEach",
+    "Image",
     "Node",
     "Rect",
     "Row",

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "ed0896e5-1c15-4e45-9918-dde96bbe83fc",
+    "title": "欢迎使用 MiniNotes",
+    "body": "这是 MiniUI 旗舰示例。\n\n左侧筛选，中间列表，右侧编辑。\nCtrl+Enter 可快速保存正文。",
+    "tag": "学习",
+    "starred": true,
+    "archived": false,
+    "updated": 1780627265.4432008
+  },
+  {
+    "id": "82ebece4-732c-491a-af6f-ef652d6b5546",
+    "title": "购物清单",
+    "body": "牛奶\n鸡蛋\n面包",
+    "tag": "生活",
+    "starred": true,
+    "archived": false,
+    "updated": 1780627074.1835444
+  },
+  {
+    "id": "1903a5ca-61dc-4949-92a9-a888a333d54a",
+    "title": "周报要点",
+    "body": "1. ScrollView 局部重绘\n2. TextArea 软换行\n3. Image fit 模式",
+    "tag": "工作",
+    "starred": true,
+    "archived": false,
+    "updated": 1780627084.044514
+  }
+]

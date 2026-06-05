@@ -1,6 +1,6 @@
 # MiniUI Demos
 
-13 个分步示例，**每个 demo 只演示一个功能**（最后一关 `demo_app.py` 综合串联）。默认主题 `Theme.dark()`。
+分步示例 + 旗舰应用。**单点 demo 每关只演示一个功能**；学完可跑 `notes_app.py` 看完整产品形态。默认主题 `Theme.dark()`。
 
 | # | 文件 | 主题 |
 |---|------|------|
@@ -16,7 +16,11 @@
 | 10 | [state.py](./state.py) | State + Bindings 列表 |
 | 11 | [animation.py](./animation.py) | animate_offset |
 | 12 | [theme.py](./theme.py) | 换肤 |
-| 13 | [demo_app.py](./demo_app.py) | 综合待办（串联以上能力） |
+| 13 | [demo_app.py](./demo_app.py) | 综合待办（DSL + ForEach） |
+| 14 | [split_column.py](./split_column.py) | 两列 flex 平分 |
+| 15 | [image.py](./image.py) | Image fit 模式 |
+| 16 | [text_area.py](./text_area.py) | TextArea 多行输入 |
+| ★ | **[notes_app.py](./notes_app.py)** | **MiniNotes 三栏笔记（旗舰）** |
 
 ## 运行
 
@@ -24,7 +28,8 @@
 cd code/ui
 pip install -r requirements.txt
 python demos/minimal_app.py   # 从 01 开始，按表顺序逐个跑
-python demos/demo_app.py      # 或直达综合 demo
+python demos/notes_app.py     # 旗舰：三栏笔记工作台
+python demos/demo_app.py      # 综合待办
 ```
 
 原理长文见博客 [MiniUI：从零理解渲染树、布局与绘制](https://nimble-cocada-736242.netlify.app/category/gui/miniui-framework/)（本地 `blog/src/content/blog/miniui-framework.md`）。

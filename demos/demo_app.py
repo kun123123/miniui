@@ -1,12 +1,6 @@
-"""Demo 13 · 综合演示（DSL）：布局、输入、滚动、State、动画与换肤。
+"""Demo 13 · 综合待办：DSL + ForEach / DerivedText。
 
-运行（在 code/ui 目录下）：
-    python demos/demo_app.py
-
-验收点：
-  - 侧栏统计 + Spacer + 换肤；主区输入添加、ScrollView 列表
-  - State + DerivedText / ForEach 驱动 UI，无需手写 Bindings
-  - 长标题 ellipsis；删除时 ctx.animate 滑出后再移除
+运行：python demos/demo_app.py
 """
 
 from __future__ import annotations
@@ -31,159 +25,148 @@ from miniui import (
     Theme,
     run,
 )
-from miniui.row import Row as RowNode
 
-SUBTITLE = (
-    "MiniUI 综合 demo：Row / Column / flex / Spacer / ScrollView / "
-    "State / ellipsis / animate / set_theme"
-)
+COLORS = ("#ef9a9a", "#90caf9", "#a5d6a7", "#fff59d")
 
 
 @dataclass
 class Task:
     title: str
     done: bool = False
+    color: str = "#90caf9"
 
 
-@run(title="Demo 13 · demo_app", size=(640, 480), theme=Theme.dark())
+@run(title="Demo 13 · todo", size=(720, 480), theme=Theme.dark())
 class TodoApp(App):
-    _stats: Text | None = None
+    _busy = False
 
     def mount(self, ctx) -> None:
         super().mount(ctx)
-        self.items = ctx.state([
-            Task("验收 miniui demos"),
-            Task("写一篇超长标题用来演示 Text 的 overflow ellipsis 在窄窗口下的效果"),
-            Task("整理 README"),
-        ])
+        self.items = ctx.state(
+            [
+                Task("学习 MiniUI 布局", color=COLORS[0]),
+                Task("跑通 ForEach demo", color=COLORS[1]),
+                Task("写一个小应用", color=COLORS[2]),
+            ]
+        )
 
     def add_task(self) -> None:
-        title = self.ctx.draft.text.strip()
-        if not title:
+        text = self.ctx.draft.text.strip()
+        if not text:
             return
+        self.items.value.append(
+            Task(text, color=COLORS[len(self.items.value) % len(COLORS)])
+        )
+        self.items.update()
         self.ctx.draft.text = ""
-        self.items.value.append(Task(title))
+
+    def sync_row(self, row, task: Task) -> None:
+        bar, label, done_btn, del_btn = row.children
+        bar.color = task.color
+        prefix = "✓ " if task.done else ""
+        title = prefix + task.title
+        if label.text != title:
+            label.text = title
+        done_btn.label = "还原" if task.done else "完成"
+
+    def toggle(self, task: Task) -> None:
+        task.done = not task.done
         self.items.update()
 
-    def toggle_theme(self) -> None:
-        self.ctx.toggle_theme()
-
-    def sync_stats(self) -> None:
-        if self._stats is None:
+    def remove(self, task: Task) -> None:
+        if self._busy:
             return
-        text = (
-            f"共 {len(self.items.value)} 项\n"
-            f"待办 {sum(1 for t in self.items.value if not t.done)}"
-        )
-        if self._stats._text == text:
+        row = self.ctx.canvas._last_event_node
+        while row is not None and not hasattr(row, "paint_dx"):
+            row = row.parent
+        target = row
+        for node in self.ctx.canvas.root.iter_subtree():
+            if getattr(node, "_foreach_item", None) is task:
+                target = node
+                break
+        if target is None:
+            self.items.value = [t for t in self.items.value if t is not task]
+            self.items.update()
             return
-        self._stats._text = text
-        self._stats._display_key = None
-        self._stats.mark_paint_dirty()
+        self._busy = True
 
-    def sync_task_row(self, row: Row, task: Task) -> None:
-        row.children[0].color = "#66bb6a" if task.done else "#42a5f5"
-        title: Text = row.children[1]
-        label = f"✓ {task.title}" if task.done else task.title
-        if title._text != label:
-            title._text = label
-            title._display_key = None
-            title.mark_paint_dirty()
-        row.children[2].label = "撤销" if task.done else "完成"
+        def finish() -> None:
+            self.items.value = [t for t in self.items.value if t is not task]
+            self.items.update()
+            target.reset_paint_offset()
+            self._busy = False
 
-    def on_ready(self) -> None:
-        """预热完成态 ellipsis，避免首次点「完成」在 paint 里算长串。"""
-        for node in self.root.iter_subtree():
-            if not isinstance(node, RowNode) or not node.children:
-                continue
-            title_node = node.children[1]
-            if not isinstance(title_node, Text) or title_node.overflow != "ellipsis":
-                continue
-            title_node.warm_display(f"✓ {title_node.text}")
+        self.ctx.animate(target, dx=(0.0, 160.0), duration=300, on_finished=finish)
 
     def task_row(self, task: Task):
-        ctx = self.ctx
-        stripe = "#66bb6a" if task.done else "#42a5f5"
-        label = f"✓ {task.title}" if task.done else task.title
-
-        def toggle_done() -> None:
-            task.done = not task.done
-            self.sync_task_row(row, task)
-            self.sync_stats()
-
-        def remove() -> None:
-            def done() -> None:
-                if task in self.items.value:
-                    self.items.value.remove(task)
-                    self.items.update()
-
-            ctx.animate("row", dx=(0.0, 160.0), duration=280, on_finished=done)
-
-        row = Row(
+        return Row(
             spacing=8,
-            align="center",
-            id="row",
+            align="stretch",
             nodes=[
-                Box(width=6, height=36, color=stripe),
-                Text(label, flex=1, overflow="ellipsis"),
-                Button(
-                    "撤销" if task.done else "完成",
-                    min_width=56,
-                    on_click=toggle_done,
+                Box(width=6, height=40, color=task.color),
+                Text(
+                    ("✓ " if task.done else "") + task.title,
+                    flex=1,
+                    overflow="ellipsis",
                 ),
-                Button("删", min_width=40, on_click=remove),
+                Button(
+                    "还原" if task.done else "完成",
+                    min_width=56,
+                    on_click=lambda t=task: self.toggle(t),
+                ),
+                Button("删", min_width=48, on_click=lambda t=task: self.remove(t)),
             ],
         )
-        return row
 
     def ui(self) -> None:
-        stats = DerivedText(
-            lambda: f"共 {len(self.items.value)} 项\n"
-            f"待办 {sum(1 for t in self.items.value if not t.done)}",
-            deps=[self.items],
-            font_size=12,
-        )
-        self._stats = stats
         self.root = Row(
             align="stretch",
             nodes=[
                 Column(
+                    flex=0,
                     padding=16,
                     spacing=10,
                     nodes=[
                         Text("待办", font_size=18, bold=True),
-                        stats,
+                        DerivedText(
+                            lambda: (
+                                f"共 {len(self.items.value)} 项 · "
+                                f"完成 {sum(1 for t in self.items.value if t.done)} 项"
+                            ),
+                            deps=[self.items],
+                            font_size=13,
+                        ),
                         Spacer(flex=1),
-                        Button("切换主题", on_click=self.toggle_theme),
+                        Button("切换主题", on_click=self.ctx.toggle_theme),
                     ],
                 ),
                 Column(
                     flex=1,
                     padding=16,
-                    spacing=12,
-                    align="stretch",
+                    spacing=10,
                     nodes=[
-                        Text(SUBTITLE, font_size=13, overflow="ellipsis"),
+                        Text("今日任务", font_size=14, overflow="ellipsis"),
                         Row(
                             spacing=8,
                             align="stretch",
                             nodes=[
                                 TextInput(
                                     "",
-                                    placeholder="新任务，回车添加…",
                                     flex=1,
+                                    placeholder="新任务…",
                                     id="draft",
                                     on_submit=self.add_task,
                                 ),
-                                Button("添加", on_click=self.add_task, min_width=64),
+                                Button("添加", on_click=self.add_task),
                             ],
                         ),
                         ForEach(
                             self.items,
                             self.task_row,
-                            updater=self.sync_task_row,
+                            updater=self.sync_row,
                             spacing=8,
                             scroll=True,
+                            flex=1,
                         ),
                     ],
                 ),

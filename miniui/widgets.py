@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
+from typing import Literal
 
 from PyQt6.QtCore import QPointF, Qt, QRect, QRectF
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QInputMethodEvent, QPainter
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QInputMethodEvent, QPainter, QPixmap
 
 from .constraints import Constraints
 from .geometry import Rect, Size
 from .node import Node
 from .text_layout import OverflowMode, fit_text_to_width
+
+_ImageFit = Literal["contain", "fill", "cover"]
 
 _BOX_LABEL_PAD_X = 8.0
 from .theme import get_theme
@@ -1106,6 +1110,133 @@ class TextArea(Node):
         return (
             f"{pad}TextArea({lines} lines) "
             f"rect=({r.x:.0f},{r.y:.0f},{r.width:.0f}x{r.height:.0f})"
+        )
+
+
+def _image_dest_rect(r: Rect, iw: float, ih: float, fit: _ImageFit) -> QRectF:
+    """在 layout 矩形 r 内按 fit 计算绘制目标矩形。"""
+    if iw <= 0 or ih <= 0 or r.width <= 0 or r.height <= 0:
+        return _qrectf(r)
+    if fit == "fill":
+        return _qrectf(r)
+    if fit == "contain":
+        scale = min(r.width / iw, r.height / ih)
+    else:
+        scale = max(r.width / iw, r.height / ih)
+    dw = iw * scale
+    dh = ih * scale
+    return QRectF(r.x + (r.width - dw) / 2, r.y + (r.height - dh) / 2, dw, dh)
+
+
+class Image(Node):
+    """位图叶子节点：路径、QPixmap 或 QImage。"""
+
+    def __init__(
+        self,
+        source: str | Path | QPixmap | QImage,
+        *,
+        width: float | None = None,
+        height: float | None = None,
+        fit: _ImageFit = "contain",
+        flex: float = 0,
+        margin: float = 0,
+        id: str | None = None,
+    ) -> None:
+        super().__init__(flex=flex, margin=margin, id=id)
+        self._source = source
+        self.fixed_width = width
+        self.fixed_height = height
+        self.fit = fit
+        self._pixmap: QPixmap | None = None
+
+    @property
+    def source(self) -> str | Path | QPixmap | QImage:
+        return self._source
+
+    @source.setter
+    def source(self, value: str | Path | QPixmap | QImage) -> None:
+        if self._source is value:
+            return
+        old = self._intrinsic_size()
+        self._source = value
+        self._pixmap = None
+        new = self._intrinsic_size()
+        if old == new:
+            self.mark_paint_dirty()
+        else:
+            self.mark_layout_dirty()
+
+    def _load_pixmap(self) -> QPixmap | None:
+        if self._pixmap is not None and not self._pixmap.isNull():
+            return self._pixmap
+        src = self._source
+        if isinstance(src, QPixmap):
+            pm = src
+        elif isinstance(src, QImage):
+            pm = QPixmap.fromImage(src)
+        else:
+            path = Path(src)
+            if not path.is_file():
+                return None
+            pm = QPixmap(str(path))
+        if pm.isNull():
+            return None
+        self._pixmap = pm
+        return pm
+
+    def _intrinsic_size(self) -> tuple[float, float]:
+        pm = self._load_pixmap()
+        if pm is None:
+            return (64.0, 64.0)
+        return (float(pm.width()), float(pm.height()))
+
+    def measure(self, constraints: Constraints) -> Size:
+        iw, ih = self._intrinsic_size()
+        if self.flex > 0:
+            return Size.zero()
+        if self.fixed_width is not None and self.fixed_height is not None:
+            w, h = self.fixed_width, self.fixed_height
+        elif self.fixed_width is not None:
+            w = self.fixed_width
+            h = w * ih / iw if iw > 0 else self.fixed_width
+        elif self.fixed_height is not None:
+            h = self.fixed_height
+            w = h * iw / ih if ih > 0 else self.fixed_height
+        else:
+            w, h = iw, ih
+        return Size(min(w, constraints.max_width), min(h, constraints.max_height))
+
+    def layout(self, rect: Rect) -> None:
+        self.rect = rect
+
+    def paint(self, painter: QPainter) -> None:
+        theme = get_theme()
+        r = self.paint_rect
+        pm = self._load_pixmap()
+        if pm is None:
+            painter.setPen(QColor(theme.colors.text_muted))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(_qrectf(r))
+            painter.drawText(QPointF(r.x + 8, r.y + r.height / 2), "Image?")
+            return
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        dest = _image_dest_rect(r, float(pm.width()), float(pm.height()), self.fit)
+        src = QRectF(0, 0, float(pm.width()), float(pm.height()))
+        if self.fit == "cover":
+            painter.save()
+            painter.setClipRect(_qrectf(r))
+            painter.drawPixmap(dest, pm, src)
+            painter.restore()
+        else:
+            painter.drawPixmap(dest, pm, src)
+
+    def dump(self, indent: int = 0) -> str:
+        pad = "  " * indent
+        rect = self.rect
+        src = self._source if isinstance(self._source, (str, Path)) else type(self._source).__name__
+        return (
+            f"{pad}Image({src!r}, fit={self.fit!r}) "
+            f"rect=({rect.x:.0f},{rect.y:.0f},{rect.width:.0f}x{rect.height:.0f})"
         )
 
 

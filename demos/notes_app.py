@@ -1,19 +1,23 @@
-"""Demo 15 · Notes Hub：三栏笔记工作台（搜索 / 筛选 / 编辑 / 动画 / 换肤）。
+"""MiniNotes · 三栏笔记工作台（MiniUI 旗舰示例）。
 
 运行（在 code/ui 目录下）：
     python demos/notes_app.py
 
-验收点：
-  - 左栏：视图（全部 / 收藏 / 归档）、标签筛选、统计、换肤
-  - 中栏：搜索 + 可滚动笔记列表；选中高亮
-  - 右栏：标题 / 正文编辑、保存、★ / 归档 / 删除（滑出动画）
-  - 增删改、筛选、搜索均走 State + ForEach / DerivedText
+能力串联：
+  - 三栏 flex 布局 · 搜索 / 视图 / 标签 / 排序
+  - ForEach + updater（选中、★ paint-only）
+  - TextInput + TextArea · 本地 JSON 持久化
+  - 删除滑出动画 · 暗色/亮色换肤 · 封面 Image
 """
 
 from __future__ import annotations
 
+import datetime
+import json
 import sys
-from dataclasses import dataclass
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from PyQt6.QtCore import QTimer
@@ -27,6 +31,7 @@ from miniui import (
     Column,
     DerivedText,
     ForEach,
+    Image,
     Row,
     Spacer,
     Text,
@@ -35,7 +40,9 @@ from miniui import (
     Theme,
     run,
 )
-from miniui.row import Row as RowNode
+
+_DATA = Path(__file__).resolve().parent / "data" / "notes.json"
+_COVER = Path(__file__).resolve().parent / "assets" / "image.png"
 
 TAGS = ("工作", "生活", "学习")
 TAG_COLORS = {"工作": "#42a5f5", "生活": "#66bb6a", "学习": "#ab47bc"}
@@ -47,140 +54,137 @@ SORT_LABELS = {"updated": "最近", "title": "标题 A→Z"}
 
 @dataclass
 class Note:
-    id: int
+    id: str
     title: str
     body: str
-    tag: str = "工作"
+    tag: str
     starred: bool = False
     archived: bool = False
+    updated: float = field(default_factory=time.time)
 
 
-def _next_id(notes: list[Note]) -> int:
-    return max((n.id for n in notes), default=0) + 1
+def _seed_notes() -> list[Note]:
+    now = time.time()
+    return [
+        Note(
+            str(uuid.uuid4()),
+            "欢迎使用 MiniNotes",
+            "这是 MiniUI 旗舰示例。\n\n左侧筛选，中间列表，右侧编辑。\nCtrl+Enter 可快速保存正文。",
+            "学习",
+            starred=True,
+            updated=now,
+        ),
+        Note(
+            str(uuid.uuid4()),
+            "购物清单",
+            "牛奶\n鸡蛋\n面包",
+            "生活",
+            updated=now - 3600,
+        ),
+        Note(
+            str(uuid.uuid4()),
+            "周报要点",
+            "1. ScrollView 局部重绘\n2. TextArea 软换行\n3. Image fit 模式",
+            "工作",
+            updated=now - 7200,
+        ),
+    ]
 
 
-@run(title="Demo 15 · Notes Hub", size=(960, 560), theme=Theme.dark())
+def _load_notes() -> list[Note]:
+    if not _DATA.is_file():
+        return _seed_notes()
+    try:
+        raw = json.loads(_DATA.read_text(encoding="utf-8"))
+        return [Note(**item) for item in raw]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return _seed_notes()
+
+
+def _save_notes(notes: list[Note]) -> None:
+    _DATA.parent.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(n) for n in notes]
+    _DATA.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@run(title="MiniNotes", size=(1080, 640), theme=Theme.dark())
 class NotesApp(App):
-    _title_input: TextInput | None = None
-    _body_input: TextInput | None = None
     _view_buttons: dict[str, Button] = {}
     _tag_buttons: dict[str | None, Button] = {}
     _sort_buttons: dict[str, Button] = {}
+    _title_input: TextInput | None = None
+    _body_input: TextArea | None = None
     _save_btn: Button | None = None
+    _star_btn: Button | None = None
+    _busy = False
 
     def mount(self, ctx) -> None:
         super().mount(ctx)
-        seed = [
-            Note(
-                1,
-                "MiniUI 布局笔记",
-                "measure → layout → paint 三遍 pass；flex 先分槽位再 measure。",
-                tag="工作",
-                starred=True,
-            ),
-            Note(
-                2,
-                "脏标记：layout vs paint",
-                "TextInput 改字只 mark_paint_dirty；增删列表才 relayout。",
-                tag="学习",
-            ),
-            Note(
-                3,
-                "周末采购",
-                "牛奶、鸡蛋、这是一段故意写很长的摘要用来演示列表里 ellipsis 截断效果",
-                tag="生活",
-            ),
-            Note(
-                4,
-                "已归档的旧想法",
-                "这条在归档视图里才能看到。",
-                tag="工作",
-                archived=True,
-            ),
-        ]
-        self.notes = ctx.state(seed)
-        self.display = ctx.state(list(seed[:3]))
+        self.notes = ctx.state(_load_notes())
+        self.display = ctx.state(list(self.notes.value))
         self.view = ctx.state("all")
         self.tag_filter = ctx.state(None)
         self.sort = ctx.state("updated")
-        self.selected_id = ctx.state(1)
+        self.selected_id = ctx.state(
+            self.notes.value[0].id if self.notes.value else ""
+        )
+        self.search = ctx.state("")
 
-    def _find(self, note_id: int) -> Note | None:
-        for n in self.notes.value:
-            if n.id == note_id:
-                return n
-        return None
+        def on_select() -> None:
+            self.sync_detail()
+            self.display.update()
+            self._sync_star_button()
 
-    def _selected(self) -> Note | None:
-        sid = self.selected_id.value
-        if sid is None:
-            return None
-        return self._find(sid)
-
-    def _search_text(self) -> str:
-        try:
-            return self.ctx.search.text.strip().lower()
-        except AttributeError:
-            return ""
+        self.selected_id.subscribe(on_select)
 
     def refresh_display(self) -> None:
-        q = self._search_text()
-        mode = self.view.value
+        q = self.search.value.strip().lower()
+        view = self.view.value
         tag = self.tag_filter.value
         out: list[Note] = []
-        for n in self.notes.value:
-            if mode == "archived":
-                if not n.archived:
-                    continue
-            elif n.archived:
+        for note in self.notes.value:
+            if view == "starred" and not note.starred:
                 continue
-            if mode == "starred" and not n.starred:
+            if view == "archived" and not note.archived:
                 continue
-            if tag is not None and n.tag != tag:
+            if view == "all" and note.archived:
                 continue
-            if q and q not in n.title.lower() and q not in n.body.lower():
+            if tag is not None and note.tag != tag:
                 continue
-            out.append(n)
+            if q and q not in note.title.lower() and q not in note.body.lower():
+                continue
+            out.append(note)
         if self.sort.value == "title":
             out.sort(key=lambda n: n.title.lower())
         else:
-            out.sort(key=lambda n: n.id, reverse=True)
-        self.display.set(out)
+            out.sort(key=lambda n: n.updated, reverse=True)
+        if self.display.value == out:
+            self.display.update()
+        else:
+            self.display.set(out)
 
-        sel = self.selected_id.value
-        if out and (sel is None or self._find(sel) not in out):
-            self.selected_id.set(out[0].id)
-        elif not out:
-            self.selected_id.set(None)
-        self.sync_detail()
-        self.sync_filter_buttons()
+    def _selected(self) -> Note | None:
+        sid = self.selected_id.value
+        for note in self.notes.value:
+            if note.id == sid:
+                return note
+        return None
 
-    def sync_filter_buttons(self) -> None:
-        mode = self.view.value
-        tag = self.tag_filter.value
-        for key, btn in self._view_buttons.items():
-            active = key == mode
-            label = VIEW_LABELS[key]
-            new = f"▸ {label}" if active else f"  {label}"
-            if btn.label != new:
-                btn.label = new
-        for key, btn in self._tag_buttons.items():
-            active = key == tag
-            name = "全部标签" if key is None else key
-            new = f"▸ {name}" if active else f"  {name}"
-            if btn.label != new:
-                btn.label = new
-        sort = self.sort.value
-        for key, btn in self._sort_buttons.items():
-            active = key == sort
-            label = SORT_LABELS[key]
-            new = f"▸ {label}" if active else f"  {label}"
-            if btn.label != new:
-                btn.label = new
-
-    def set_sort(self, mode: str) -> None:
-        self.sort.set(mode)
-        self.refresh_display()
+    def _persist_detail(self) -> bool:
+        if self._title_input is None or self._body_input is None:
+            return False
+        note = self._selected()
+        if note is None:
+            return False
+        title = self._title_input.text.strip()
+        body = self._body_input.text
+        if note.title == title and note.body == body:
+            return False
+        note.title = title or "（无标题）"
+        note.body = body
+        note.updated = time.time()
+        _save_notes(self.notes.value)
+        return True
 
     def sync_detail(self) -> None:
         if self._title_input is None or self._body_input is None:
@@ -190,161 +194,178 @@ class NotesApp(App):
             title, body = "", ""
         else:
             title, body = note.title, note.body
-        self._title_input.text = title
-        self._body_input.text = body
+        if self._title_input.text != title:
+            self._title_input.text = title
+        if self._body_input.text != body:
+            self._body_input.text = body
+
+    def save_detail(self) -> None:
+        if self._persist_detail():
+            self.notes.update()
+            self.refresh_display()
+        if self._save_btn is not None:
+            self._save_btn.label = "已保存"
+            self._save_btn.mark_paint_dirty()
+
+            def reset() -> None:
+                if self._save_btn is not None:
+                    self._save_btn.label = "保存"
+                    self._save_btn.mark_paint_dirty()
+
+            QTimer.singleShot(900, reset)
+
+    def select_note(self, note: Note) -> None:
+        if self._persist_detail():
+            self.notes.update()
+            self.refresh_display()
+        self.selected_id.set(note.id)
 
     def set_view(self, mode: str) -> None:
         self.view.set(mode)
         self.refresh_display()
+        self._sync_nav_buttons()
 
     def set_tag(self, tag: str | None) -> None:
         self.tag_filter.set(tag)
         self.refresh_display()
+        self._sync_nav_buttons()
 
-    def select_note(self, note: Note) -> None:
-        self._persist_detail()
-        self.selected_id.set(note.id)
-        self.sync_detail()
-        self.display.update()
+    def set_sort(self, mode: str) -> None:
+        self.sort.set(mode)
+        self.refresh_display()
+        self._sync_nav_buttons()
 
-    def _persist_detail(self) -> bool:
+    def run_search(self) -> None:
+        self.search.set(self.ctx.search.text)
+        self.refresh_display()
+
+    def star_selected(self) -> None:
         note = self._selected()
-        if note is None or self._title_input is None or self._body_input is None:
-            return False
-        title = self._title_input.text.strip() or "无标题"
-        body = self._body_input.text
-        if note.title == title and note.body == body:
-            return False
-        note.title = title
-        note.body = body
-        return True
-
-    def _flash_saved(self) -> None:
-        btn = self._save_btn
-        if btn is None:
-            return
-        btn.label = "已保存 ✓"
-
-        def restore() -> None:
-            if btn.label == "已保存 ✓":
-                btn.label = "保存"
-
-        QTimer.singleShot(1200, restore)
-
-    def save_detail(self) -> None:
-        if self._selected() is None:
-            return
-        self._persist_detail()
-        self.display.update()
-        self._flash_saved()
+        if note is not None:
+            self.toggle_star(note)
 
     def create_note(self) -> None:
         if self._persist_detail():
             self.notes.update()
         tag = self.tag_filter.value or TAGS[0]
-        nid = _next_id(self.notes.value)
-        note = Note(nid, "新笔记", "", tag=tag)
-        self.notes.value.append(note)
+        note = Note(str(uuid.uuid4()), "新笔记", "", tag)
+        self.notes.value.insert(0, note)
         self.notes.update()
-        self.view.set("all")
-        self.selected_id.set(nid)
+        self.selected_id.set(note.id)
         self.refresh_display()
         self.sync_detail()
+        _save_notes(self.notes.value)
+        if self._title_input is not None:
+            self.ctx.canvas._set_focus(self._title_input)
 
-    def toggle_star(self) -> None:
-        note = self._selected()
-        if note is None:
-            return
+    def toggle_star(self, note: Note) -> None:
         note.starred = not note.starred
+        note.updated = time.time()
+        _save_notes(self.notes.value)
         self.notes.update()
         self.refresh_display()
+        self._sync_star_button()
+
+    def _sync_star_button(self) -> None:
+        note = self._selected()
+        if self._star_btn is None:
+            return
+        label = "★ 已收藏" if note and note.starred else "☆ 收藏"
+        if self._star_btn.label != label:
+            self._star_btn.label = label
 
     def toggle_archive(self) -> None:
         note = self._selected()
         if note is None:
             return
         note.archived = not note.archived
-        if note.archived:
-            note.starred = False
+        note.updated = time.time()
         self.notes.update()
         self.refresh_display()
+        _save_notes(self.notes.value)
 
     def delete_note(self) -> None:
+        if self._busy:
+            return
         note = self._selected()
         if note is None:
             return
+        self._busy = True
+        card = self.ctx.editor_card
 
-        def remove() -> None:
-            if note in self.notes.value:
-                self.notes.value.remove(note)
-                self.notes.update()
+        def finish() -> None:
+            self.notes.value = [n for n in self.notes.value if n.id != note.id]
+            self.notes.update()
+            if self.notes.value:
+                self.selected_id.set(self.notes.value[0].id)
+            else:
+                self.selected_id.set("")
             self.refresh_display()
+            self.sync_detail()
+            card.reset_paint_offset()
+            _save_notes(self.notes.value)
+            self._busy = False
 
-        self.ctx.animate("editor_card", dx=(0.0, 280.0), duration=260, on_finished=remove)
+        self.ctx.animate("editor_card", dx=(0.0, 220.0), duration=320, on_finished=finish)
 
-    def sync_note_row(self, row: RowNode, note: Note) -> None:
+    def _sync_nav_buttons(self) -> None:
+        for key, btn in self._view_buttons.items():
+            mark = "● " if self.view.value == key else ""
+            btn.label = mark + VIEW_LABELS[key]
+        for key, btn in self._tag_buttons.items():
+            label = "全部标签" if key is None else key
+            mark = "● " if self.tag_filter.value == key else ""
+            btn.label = mark + label
+        for key, btn in self._sort_buttons.items():
+            mark = "● " if self.sort.value == key else ""
+            btn.label = mark + SORT_LABELS[key]
+
+    def sync_note_row(self, row, note: Note) -> None:
         selected = self.selected_id.value == note.id
-        stripe: Box = row.children[0]
-        col: Column = row.children[1]
-        title: Text = col.children[0]
-        preview: Text = col.children[1]
-        badge: Text = col.children[2]
-        stripe.color = "#ffb74d" if selected else TAG_COLORS.get(note.tag, "#78909c")
-        title.text = ("★ " if note.starred else "") + note.title
-        preview.text = note.body[:48] + ("…" if len(note.body) > 48 else "")
-        badge.text = note.tag + (" · 归档" if note.archived else "")
+        tag_box, title_btn, star_btn = row.children[0], row.children[1], row.children[2]
+        tag_box.color = TAG_COLORS.get(note.tag, "#888888")
+        prefix = "▸ " if selected else ""
+        title = prefix + (note.title or "（无标题）")
+        if title_btn.label != title:
+            title_btn.label = title
+        star = "★" if note.starred else "☆"
+        if star_btn.label != star:
+            star_btn.label = star
 
     def note_row(self, note: Note):
-        def on_click() -> None:
-            self.select_note(note)
-
         return Row(
-            spacing=0,
+            spacing=6,
             align="stretch",
             nodes=[
-                Box(width=4, height=56, color=TAG_COLORS.get(note.tag, "#78909c")),
-                Column(
+                Box(width=4, height=46, color=TAG_COLORS.get(note.tag, "#888")),
+                Button(
+                    (note.title or "（无标题）"),
                     flex=1,
-                    spacing=2,
-                    margin=8,
-                    nodes=[
-                        Text(
-                            ("★ " if note.starred else "") + note.title,
-                            font_size=14,
-                            bold=True,
-                            overflow="ellipsis",
-                        ),
-                        Text(
-                            note.body[:48] + ("…" if len(note.body) > 48 else ""),
-                            font_size=12,
-                            overflow="ellipsis",
-                        ),
-                        Text(
-                            note.tag + (" · 归档" if note.archived else ""),
-                            font_size=11,
-                        ),
-                    ],
+                    min_width=100,
+                    height=46,
+                    on_click=lambda n=note: self.select_note(n),
                 ),
-                Button("打开", min_width=52, height=56, on_click=on_click),
+                Button(
+                    "★" if note.starred else "☆",
+                    min_width=40,
+                    height=32,
+                    on_click=lambda n=note: self.toggle_star(n),
+                ),
             ],
         )
 
-    def ui(self) -> None:
-        stats = DerivedText(
-            lambda: (
-                f"共 {len(self.notes.value)} 条\n"
-                f"显示 {len(self.display.value)} 条\n"
-                f"★ {sum(1 for n in self.notes.value if n.starred)}"
-            ),
-            deps=[self.notes, self.display],
-            font_size=12,
-        )
+    def on_ready(self) -> None:
+        self.refresh_display()
+        self.sync_detail()
+        self._sync_nav_buttons()
+        self._sync_star_button()
 
+    def ui(self) -> None:
         view_nodes = []
         for key in VIEWS:
             btn = Button(
                 VIEW_LABELS[key],
-                min_width=100,
+                min_width=108,
                 on_click=lambda k=key: self.set_view(k),
             )
             self._view_buttons[key] = btn
@@ -352,10 +373,10 @@ class NotesApp(App):
 
         tag_nodes = []
         for key in (None, *TAGS):
-            name = "全部标签" if key is None else key
+            label = "全部标签" if key is None else key
             btn = Button(
-                name,
-                min_width=100,
+                label,
+                min_width=108,
                 on_click=lambda t=key: self.set_tag(t),
             )
             self._tag_buttons[key] = btn
@@ -365,145 +386,166 @@ class NotesApp(App):
         for key in SORTS:
             btn = Button(
                 SORT_LABELS[key],
-                min_width=100,
+                min_width=108,
                 on_click=lambda k=key: self.set_sort(k),
             )
             self._sort_buttons[key] = btn
             sort_nodes.append(btn)
 
-        self._title_input = TextInput(
-            "",
-            placeholder="标题…",
-            flex=1,
-            on_submit=self.save_detail,
-        )
+        self._title_input = TextInput("", flex=1, id="title", placeholder="标题")
         self._body_input = TextArea(
             "",
-            placeholder="正文…（Enter 换行，Ctrl+Enter 保存）",
             flex=1,
-            min_lines=10,
+            min_lines=6,
+            placeholder="正文… Enter 换行，Ctrl+Enter 保存",
+            id="body",
             on_submit=self.save_detail,
         )
+        self._save_btn = Button("保存", min_width=72, on_click=self.save_detail)
+        self._star_btn = Button("☆ 收藏", min_width=72, on_click=self.star_selected)
 
-        self._save_btn = Button(
-            "保存", min_width=72, on_click=self.save_detail
-        )
+        cover_image: Image | None = None
+        if _COVER.is_file():
+            cover_image = Image(str(_COVER), width=200, height=120, fit="cover")
+
+        sidebar_nodes = [
+            Text("MiniNotes", font_size=18, bold=True),
+            Text("视图", font_size=12),
+            *view_nodes,
+            Text("标签", font_size=12),
+            *tag_nodes,
+            Text("排序", font_size=12),
+            *sort_nodes,
+            Spacer(flex=1),
+            DerivedText(
+                lambda: (
+                    f"共 {len(self.notes.value)} 篇 · "
+                    f"显示 {len(self.display.value)} 篇"
+                ),
+                deps=[self.notes, self.display],
+                font_size=12,
+            ),
+            Button("＋ 新笔记", on_click=self.create_note),
+            Button("切换主题", on_click=self.ctx.toggle_theme),
+        ]
+
+        editor_header: list = []
+        if cover_image is not None:
+            editor_header.append(
+                Row(
+                    spacing=10,
+                    align="stretch",
+                    nodes=[
+                        cover_image,
+                        Column(
+                            flex=1,
+                            spacing=4,
+                            nodes=[
+                                DerivedText(
+                                    lambda: self._editor_meta(),
+                                    deps=[self.selected_id, self.notes],
+                                    font_size=12,
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+            )
+        else:
+            editor_header.append(
+                DerivedText(
+                    lambda: self._editor_meta(),
+                    deps=[self.selected_id, self.notes],
+                    font_size=12,
+                )
+            )
+
         editor_card = Column(
             id="editor_card",
+            flex=1,
             spacing=10,
             align="stretch",
             nodes=[
+                *editor_header,
                 Row(
                     spacing=8,
                     align="stretch",
-                    nodes=[
-                        self._title_input,
-                        self._save_btn,
-                    ],
+                    nodes=[self._title_input, self._save_btn],
                 ),
                 self._body_input,
                 Row(
                     spacing=8,
                     nodes=[
-                        Button("★ 收藏", min_width=72, on_click=self.toggle_star),
-                        Button("归档", min_width=56, on_click=self.toggle_archive),
-                        Spacer(flex=1),
-                        Button("删除", min_width=56, on_click=self.delete_note),
+                        self._star_btn,
+                        Button("归档", min_width=64, on_click=self.toggle_archive),
+                        Button("删除", min_width=64, on_click=self.delete_note),
                     ],
                 ),
-                DerivedText(
-                    lambda: (
-                        "未选中笔记"
-                        if self._selected() is None
-                        else f"id={self._selected().id} · {self._selected().tag}"
-                        + (" · 已归档" if self._selected().archived else "")
-                    ),
-                    deps=[self.notes, self.selected_id, self.display],
-                    font_size=12,
-                ),
             ],
         )
-
-        sidebar = Column(
-            padding=16,
-            spacing=8,
-            nodes=[
-                Text("MiniNotes", font_size=18, bold=True),
-                stats,
-                Text("视图", font_size=12),
-                *view_nodes,
-                Text("标签", font_size=12),
-                *tag_nodes,
-                Text("排序", font_size=12),
-                *sort_nodes,
-                Spacer(flex=1),
-                Button("切换主题", on_click=self.ctx.toggle_theme),
-            ],
-        )
-
-        list_panel = Column(
-            flex=1,
-            padding=16,
-            spacing=10,
-            align="stretch",
-            nodes=[
-                Text("笔记列表", font_size=15, bold=True),
-                Row(
-                    spacing=8,
-                    align="stretch",
-                    nodes=[
-                        TextInput(
-                            "",
-                            placeholder="搜索标题或正文…",
-                            flex=1,
-                            id="search",
-                            on_submit=self.refresh_display,
-                        ),
-                        Button("搜", min_width=40, on_click=self.refresh_display),
-                        Button("+ 新建", min_width=72, on_click=self.create_note),
-                    ],
-                ),
-                ForEach(
-                    self.display,
-                    self.note_row,
-                    updater=self.sync_note_row,
-                    spacing=6,
-                    scroll=True,
-                    empty="（没有匹配的笔记）",
-                ),
-            ],
-        )
-
-        detail_panel = Column(
-            flex=1,
-            padding=16,
-            spacing=10,
-            align="stretch",
-            nodes=[
-                Text("编辑区", font_size=15, bold=True),
-                editor_card,
-            ],
-        )
-
-        def vrule() -> Box:
-            return Box(width=1, color="#333340")
 
         self.root = Row(
             align="stretch",
+            spacing=0,
             nodes=[
-                sidebar,
-                vrule(),
-                list_panel,
-                vrule(),
-                detail_panel,
+                Column(flex=0, padding=12, spacing=8, nodes=sidebar_nodes),
+                Box(width=1, flex=0, color="#333355"),
+                Column(
+                    flex=1,
+                    padding=12,
+                    spacing=8,
+                    nodes=[
+                        Text("笔记列表", font_size=15, bold=True),
+                        Row(
+                            spacing=8,
+                            align="stretch",
+                            nodes=[
+                                TextInput(
+                                    "",
+                                    flex=1,
+                                    placeholder="搜索标题或正文…",
+                                    id="search",
+                                    on_submit=self.run_search,
+                                ),
+                                Button("搜", min_width=48, on_click=self.run_search),
+                            ],
+                        ),
+                        ForEach(
+                            self.display,
+                            self.note_row,
+                            updater=self.sync_note_row,
+                            spacing=6,
+                            scroll=True,
+                            flex=1,
+                            empty="（没有匹配的笔记）",
+                        ),
+                    ],
+                ),
+                Box(width=1, flex=0, color="#333355"),
+                Column(
+                    flex=1,
+                    padding=12,
+                    spacing=8,
+                    nodes=[
+                        Text("编辑", font_size=15, bold=True),
+                        editor_card,
+                    ],
+                ),
             ],
         )
 
-    def on_ready(self) -> None:
-        self.refresh_display()
-        for node in self.root.iter_subtree():
-            if isinstance(node, Text) and node.overflow == "ellipsis":
-                node.warm_display("★ " + node.text)
+    def _editor_meta(self) -> str:
+        note = self._selected()
+        if note is None:
+            return "未选中笔记"
+        ts = datetime.datetime.fromtimestamp(note.updated).strftime("%Y-%m-%d %H:%M")
+        flags = []
+        if note.starred:
+            flags.append("★")
+        if note.archived:
+            flags.append("归档")
+        flag = " · ".join(flags)
+        return f"{note.tag} · 更新 {ts}" + (f" · {flag}" if flag else "")
 
 
 if __name__ == "__main__":

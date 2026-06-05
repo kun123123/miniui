@@ -56,11 +56,14 @@ if __name__ == "__main__":
 | 12 | `demos/theme.py` | `ctx.toggle_theme` |
 | 13 | `demos/demo_app.py` | 综合待办（DSL） |
 | 14 | `demos/split_column.py` | 两列 `flex=1` 平分；layout vs paint 脏标记 |
+| 15 | `demos/image.py` | `Image`：路径 / `QPixmap`、`contain` / `fill` / `cover` |
+| 16 | `demos/text_area.py` | `TextArea`：多行、软换行、滚轮、Ctrl+Enter |
+| ★ | **`demos/notes_app.py`** | **旗舰示例 MiniNotes**：三栏笔记、搜索、持久化 |
 
 ```bash
-python demos/flex.py
+python demos/notes_app.py    # 旗舰：三栏笔记工作台
+python demos/demo_app.py     # 综合待办
 python demos/split_column.py
-python demos/demo_app.py
 ```
 
 ## Flex 规则（当前实现）
