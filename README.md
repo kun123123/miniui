@@ -36,7 +36,42 @@ if __name__ == "__main__":
 - `@run`：创建 `QApplication`、窗口、`UiCanvas`
 - `mount`：逻辑层（`ctx.state`、`ctx.animate`、回调）
 - `ui`：赋值 `self.root = ...`（`Row` / `Column` 支持 `nodes=[...]` 写法）
-- `DerivedText` / `ForEach`：派生文案与列表，见 `demos/state.py`、`demos/demo_app.py`
+- `DerivedText` / `ForEach`：派生文案与列表，见 [State 用法](#state-用法) 与 `demos/state.py`
+
+## State 用法
+
+**State** = 可订阅的数据盒。改数据并通知 → 已绑定的 UI 自动同步，不必手写 `refresh`。
+
+```python
+def mount(self, ctx):
+    self.items = ctx.state(["a", "b"])
+
+def add(self):
+    self.items.value.append("c")
+    self.items.update()          # 原地改 list 必须 update()
+
+def rename(self):
+    self.title.set("新标题")      # 整值替换用 set()
+```
+
+| API | 何时用 |
+|-----|--------|
+| `ctx.state(初始值)` | `mount` 里创建 |
+| `.value` | 读当前数据 |
+| `.set(新值)` | 换成新对象；`==` 相等则不通知 |
+| `.update()` | 原地改（`append`、改对象字段）后强制通知 |
+
+UI 绑定（窗口启动时 `_wire_tree` 自动订阅）：
+
+| DSL | 用途 |
+|-----|------|
+| `DerivedText(lambda: f"...{self.n.value}", deps=[self.n])` | 算出来的单行文字 |
+| `ForEach(self.items, self.row_builder)` | 列表；增删行会 relayout |
+| `ForEach(..., updater=self.sync_row)` | 行数不变时只改行内控件（paint-only） |
+
+点击链路：`Button.on_click` → 改 State → `Bindings` 回调 → 控件 `mark_paint_dirty` / `mark_layout_dirty` → `paintEvent`。
+
+入门：`python demos/state.py` · 实战：`demo_app.py` · 多 State 筛选：`notes_app.py`。
 
 ## Demo 列表（建议按序运行）
 
@@ -75,6 +110,15 @@ python demos/split_column.py
 3. **`flex > 0` 时忽略** 子节点上的 `Box` 固定 `width` / `height`（交叉轴仍可由 `align="stretch"` 拉满）。
 
 因此两列都写 `flex=1` 会始终各占一半；侧栏文案变长应在列内用 `overflow="ellipsis"`，而不是撑宽列。
+
+## 组件速览
+
+| 组件 | 说明 | Demo |
+|------|------|------|
+| `TextInput` | 单行输入、IME、Enter 提交 | `text_input.py` |
+| `TextArea` | 多行、软换行、滚轮、`Ctrl+Enter` | `text_area.py` |
+| `Image` | 路径 / `QPixmap`，`contain` / `fill` / `cover` | `image.py` |
+| `ScrollView` | 裁剪 + `scroll_y` | `scroll.py` |
 
 ## 脏标记
 

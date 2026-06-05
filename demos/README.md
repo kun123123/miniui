@@ -13,7 +13,7 @@
 | 07 | [text_input.py](./text_input.py) | TextInput 输入 |
 | 08 | [ellipsis.py](./ellipsis.py) | Text 省略号 |
 | 09 | [scroll.py](./scroll.py) | ScrollView 滚动 |
-| 10 | [state.py](./state.py) | State + Bindings 列表 |
+| 10 | [state.py](./state.py) | State + `ForEach` / `DerivedText` |
 | 11 | [animation.py](./animation.py) | animate_offset |
 | 12 | [theme.py](./theme.py) | 换肤 |
 | 13 | [demo_app.py](./demo_app.py) | 综合待办（DSL + ForEach） |
