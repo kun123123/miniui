@@ -4,12 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .column import Column as _Column
+from .column import Column as _Column, Panel as _Panel
 from .node import Node
 from .row import Row as _Row
+from .stack import Stack as _Stack
 
 _LAYOUT = frozenset(
-    {"padding", "spacing", "align", "flex", "margin", "id", "children"}
+    {
+        "padding",
+        "spacing",
+        "align",
+        "flex",
+        "margin",
+        "id",
+        "children",
+        "color",
+        "radius",
+        "overlay_anchor",
+    }
 )
 
 
@@ -52,3 +64,11 @@ def Row(*nodes: Node, **kwargs) -> _Row:
 
 def Column(*nodes: Node, **kwargs) -> _Column:
     return _container(_Column, *nodes, **kwargs)
+
+
+def Panel(*nodes: Node, **kwargs) -> _Panel:
+    return _container(_Panel, *nodes, **kwargs)
+
+
+def Stack(*nodes: Node, **kwargs) -> _Stack:
+    return _container(_Stack, *nodes, **kwargs)

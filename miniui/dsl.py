@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TypeVar
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
 
+from .animation import AnimStep
 from .canvas import UiCanvas
 from .column import Column
 from .node import Node
@@ -68,7 +69,7 @@ class AppCtx:
         return self._app_ids[name]
 
     def __getattr__(self, name: str) -> Node:
-        if name.startswith("_") or name in ("canvas", "state", "ref", "animate"):
+        if name.startswith("_") or name in ("canvas", "state", "ref", "animate", "animate_sentence"):
             raise AttributeError(name)
         try:
             return self._app_ids[name]
@@ -104,6 +105,21 @@ class AppCtx:
             dx=dx,
             dy=dy,
             duration=duration,
+            on_finished=on_finished,
+        )
+
+    def animate_sentence(
+        self,
+        steps: Sequence[AnimStep],
+        *,
+        on_finished: Callable[[], None] | None = None,
+    ) -> None:
+        """串行播放动画句子：上抬 → 横移 → 落回 等多步组合。"""
+        if self.canvas is None:
+            raise RuntimeError("canvas 尚未挂载")
+        self.canvas.animate_sentence(
+            list(steps),
+            resolve_id=self._resolve_id,
             on_finished=on_finished,
         )
 

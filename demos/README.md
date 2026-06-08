@@ -20,6 +20,8 @@
 | 14 | [split_column.py](./split_column.py) | 两列 flex 平分 |
 | 15 | [image.py](./image.py) | Image fit 模式 |
 | 16 | [text_area.py](./text_area.py) | TextArea 多行输入 |
+| 17 | [video.py](./video.py) | Video 本地视频播放 |
+| ★ | **[player_app.py](./player_app.py)** | **MiniPlayer 视频播放器** |
 | ★ | **[notes_app.py](./notes_app.py)** | **MiniNotes 三栏笔记（旗舰）** |
 
 ## 运行
@@ -29,6 +31,7 @@ cd code/ui
 pip install -r requirements.txt
 python demos/minimal_app.py   # 从 01 开始，按表顺序逐个跑
 python demos/notes_app.py     # 旗舰：三栏笔记工作台
+python demos/player_app.py    # MiniPlayer 视频播放器
 python demos/demo_app.py      # 综合待办
 ```
 

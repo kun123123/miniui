@@ -43,6 +43,7 @@ class Node(ABC):
         bind_ui_id(self, id)
         self._layout_dirty = True
         self._paint_dirty = True
+        self._visible = True
         self._damage_rect: Rect | None = None
         self._canvas = None  # UiCanvas，由画布在挂载树时注入
         self.paint_dx = 0.0
@@ -56,6 +57,17 @@ class Node(ABC):
 
     def __eq__(self, other: object) -> bool:
         return self is other if isinstance(other, Node) else NotImplemented
+
+    @property
+    def visible(self) -> bool:
+        return self._visible
+
+    @visible.setter
+    def visible(self, value: bool) -> None:
+        if self._visible == value:
+            return
+        self._visible = value
+        self.mark_paint_dirty()
 
     def _find_canvas(self):
         node: Node | None = self
@@ -120,6 +132,8 @@ class Node(ABC):
         self._damage_rect = None
 
     def subtree_paint_dirty(self) -> bool:
+        if not self._visible:
+            return False
         if self._paint_dirty:
             return True
         for child in getattr(self, "children", ()):
@@ -238,6 +252,9 @@ class Node(ABC):
 
         if not self._paint_dirty:
             return
+        if not self.visible:
+            self.clear_paint_state()
+            return
         if not self.paint_rect.intersects(region):
             return
         self.paint(painter)
@@ -283,7 +300,7 @@ class Node(ABC):
         ...
 
     def hit_test(self, x: float, y: float) -> Node | None:
-        if not self.rect.contains(x, y):
+        if not self._visible or not self.rect.contains(x, y):
             return None
         return self
 

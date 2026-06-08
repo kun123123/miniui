@@ -6,8 +6,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from PyQt6.QtCore import QPointF, Qt, QRect, QRectF
+from PyQt6.QtCore import QPointF, Qt, QUrl, QRect, QRectF
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QInputMethodEvent, QPainter, QPixmap
+from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 
 from .constraints import Constraints
 from .geometry import Rect, Size
@@ -1236,6 +1237,382 @@ class Image(Node):
         src = self._source if isinstance(self._source, (str, Path)) else type(self._source).__name__
         return (
             f"{pad}Image({src!r}, fit={self.fit!r}) "
+            f"rect=({rect.x:.0f},{rect.y:.0f},{rect.width:.0f}x{rect.height:.0f})"
+        )
+
+
+class Video(Node):
+    """视频叶子节点：本地路径或 QUrl，经 QVideoSink 取帧后自绘（与 Image 同一套 fit）。"""
+
+    _DEFAULT_SIZE = (320.0, 180.0)
+
+    def __init__(
+        self,
+        source: str | Path | QUrl,
+        *,
+        width: float | None = None,
+        height: float | None = None,
+        fit: _ImageFit = "contain",
+        autoplay: bool = True,
+        loop: bool = False,
+        muted: bool = False,
+        flex: float = 0,
+        margin: float = 0,
+        id: str | None = None,
+    ) -> None:
+        super().__init__(flex=flex, margin=margin, id=id)
+        self._source = source
+        self.fixed_width = width
+        self.fixed_height = height
+        self.fit = fit
+        self.autoplay = autoplay
+        self.loop = loop
+        self._muted = muted
+        self._player: QMediaPlayer | None = None
+        self._audio: QAudioOutput | None = None
+        self._sink: QVideoSink | None = None
+        self._frame: QImage | None = None
+        self._intrinsic: tuple[float, float] | None = None
+        self._load_error = False
+        self._autoplay_started = False
+
+    @property
+    def source(self) -> str | Path | QUrl:
+        return self._source
+
+    @source.setter
+    def source(self, value: str | Path | QUrl) -> None:
+        if self._source == value:
+            return
+        old = self._intrinsic_size()
+        self._source = value
+        self._frame = None
+        self._intrinsic = None
+        self._load_error = False
+        self._autoplay_started = False
+        self._apply_source()
+        new = self._intrinsic_size()
+        if old == new:
+            self.mark_paint_dirty()
+        else:
+            self.mark_layout_dirty()
+
+    @property
+    def playing(self) -> bool:
+        if self._player is None:
+            return False
+        return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    @muted.setter
+    def muted(self, value: bool) -> None:
+        if self._muted == value:
+            return
+        self._muted = value
+        if self._audio is not None:
+            self._audio.setMuted(value)
+
+    @property
+    def position(self) -> int:
+        if self._player is None:
+            return 0
+        return self._player.position()
+
+    @property
+    def duration(self) -> int:
+        if self._player is None:
+            return 0
+        return self._player.duration()
+
+    @property
+    def volume(self) -> float:
+        if self._audio is None:
+            return 1.0
+        return self._audio.volume()
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        self._ensure_player()
+        assert self._audio is not None
+        self._audio.setVolume(max(0.0, min(1.0, value)))
+
+    def play(self) -> None:
+        self._ensure_player()
+        assert self._player is not None
+        self._player.play()
+
+    def pause(self) -> None:
+        if self._player is not None:
+            self._player.pause()
+
+    def stop(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+        self._frame = None
+        self.mark_paint_dirty()
+
+    def toggle_play_pause(self) -> None:
+        if self.playing:
+            self.pause()
+        else:
+            self.play()
+
+    def seek(self, ms: int) -> None:
+        self._ensure_player()
+        if self._player is None:
+            return
+        dur = self._player.duration()
+        pos = max(0, min(ms, dur if dur > 0 else ms))
+        self._player.setPosition(pos)
+
+    def seek_ratio(self, ratio: float) -> None:
+        dur = self.duration
+        if dur <= 0:
+            return
+        self.seek(int(max(0.0, min(1.0, ratio)) * dur))
+
+    def skip(self, delta_ms: int) -> None:
+        self.seek(self.position + delta_ms)
+
+    def _source_url(self) -> QUrl:
+        src = self._source
+        if isinstance(src, QUrl):
+            return src
+        path = Path(src)
+        if path.is_file():
+            return QUrl.fromLocalFile(str(path.resolve()))
+        return QUrl(str(src))
+
+    def _ensure_player(self) -> None:
+        if self._player is not None:
+            return
+        self._player = QMediaPlayer()
+        self._audio = QAudioOutput()
+        self._audio.setMuted(self._muted)
+        self._player.setAudioOutput(self._audio)
+        self._sink = QVideoSink()
+        self._player.setVideoOutput(self._sink)
+        self._sink.videoFrameChanged.connect(self._on_video_frame)
+        self._player.mediaStatusChanged.connect(self._on_media_status)
+        self._player.errorOccurred.connect(self._on_player_error)
+        self._apply_source()
+
+    def _apply_source(self) -> None:
+        if self._player is None:
+            return
+        self._player.stop()
+        self._frame = None
+        url = self._source_url()
+        if url.isLocalFile() and not Path(url.toLocalFile()).is_file():
+            self._load_error = True
+            self.mark_paint_dirty()
+            return
+        self._load_error = False
+        self._player.setSource(url)
+
+    def _content_rect(self) -> Rect:
+        """绘制区：扣除父 Stack 上可见的底部叠层（避免盖住控制条）。"""
+        r = self.paint_rect
+        parent = self.parent
+        if parent is None:
+            return r
+        for sib in getattr(parent, "children", ()):
+            if sib is self:
+                continue
+            if getattr(sib, "overlay_anchor", None) == "bottom" and sib.visible:
+                top = sib.rect.y
+                if top > r.y:
+                    r = Rect(r.x, r.y, r.width, max(0.0, top - r.y))
+        return r
+
+    def _screen_content_rect(self, canvas, screen: Rect) -> Rect:
+        parent = self.parent
+        if parent is None:
+            return screen
+        for sib in getattr(parent, "children", ()):
+            if sib is self:
+                continue
+            if getattr(sib, "overlay_anchor", None) == "bottom" and sib.visible:
+                ov = canvas._node_screen_rect(sib)
+                if ov.y > screen.y:
+                    screen = Rect(
+                        screen.x, screen.y, screen.width, max(0.0, ov.y - screen.y)
+                    )
+        return screen
+
+    def _repaint_video_area(self) -> None:
+        """每帧 / 缩放后标记视频区域（不覆盖底部叠层控制条）。"""
+        canvas = self._find_canvas()
+        if canvas is None:
+            self.mark_paint_dirty()
+            return
+        screen = canvas._node_screen_rect(self)
+        self.set_damage(self._screen_content_rect(canvas, screen))
+        canvas._schedule_update()
+
+    def _on_video_frame(self, frame) -> None:
+        img = frame.toImage()
+        if img.isNull():
+            return
+        if self._intrinsic is None:
+            self._intrinsic = (float(img.width()), float(img.height()))
+            self.mark_layout_dirty()
+        self._frame = img
+        self._repaint_video_area()
+
+    def _on_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
+        if self._player is None:
+            return
+        if (
+            status == QMediaPlayer.MediaStatus.LoadedMedia
+            and self.autoplay
+            and not self._autoplay_started
+        ):
+            self._autoplay_started = True
+            self._player.play()
+        if self.loop and status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._player.setPosition(0)
+            self._player.play()
+
+    def _on_player_error(self, *_args) -> None:
+        self._load_error = True
+        self.mark_paint_dirty()
+
+    def _intrinsic_size(self) -> tuple[float, float]:
+        if self._intrinsic is not None:
+            return self._intrinsic
+        return self._DEFAULT_SIZE
+
+    def measure(self, constraints: Constraints) -> Size:
+        self._ensure_player()
+        iw, ih = self._intrinsic_size()
+        if self.flex > 0:
+            return Size(constraints.max_width, 0.0)
+        if self.fixed_width is not None and self.fixed_height is not None:
+            w, h = self.fixed_width, self.fixed_height
+        elif self.fixed_width is not None:
+            w = self.fixed_width
+            h = w * ih / iw if iw > 0 else self.fixed_width
+        elif self.fixed_height is not None:
+            h = self.fixed_height
+            w = h * iw / ih if ih > 0 else self.fixed_height
+        else:
+            w, h = iw, ih
+        return Size(min(w, constraints.max_width), min(h, constraints.max_height))
+
+    def layout(self, rect: Rect) -> None:
+        size_changed = (
+            self.rect.width != rect.width
+            or self.rect.height != rect.height
+            or self.rect.x != rect.x
+            or self.rect.y != rect.y
+        )
+        self.rect = rect
+        if size_changed and self._frame is not None and not self._frame.isNull():
+            self._repaint_video_area()
+
+    def paint(self, painter: QPainter) -> None:
+        theme = get_theme()
+        r = self._content_rect()
+        if r.width <= 0 or r.height <= 0:
+            return
+        if self._load_error or self._frame is None or self._frame.isNull():
+            painter.setPen(QColor(theme.colors.text_muted))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(_qrectf(r))
+            label = "Video?" if self._load_error else "Video…"
+            painter.drawText(QPointF(r.x + 8, r.y + r.height / 2), label)
+            return
+        painter.fillRect(_qrectf(r), QColor("#000000"))
+        pm = QPixmap.fromImage(self._frame)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        iw, ih = float(pm.width()), float(pm.height())
+        dest = _image_dest_rect(r, iw, ih, self.fit)
+        src = QRectF(0, 0, iw, ih)
+        if self.fit == "cover":
+            painter.save()
+            painter.setClipRect(_qrectf(r))
+            painter.drawPixmap(dest, pm, src)
+            painter.restore()
+        else:
+            painter.drawPixmap(dest, pm, src)
+
+    def dump(self, indent: int = 0) -> str:
+        pad = "  " * indent
+        rect = self.rect
+        src = self._source if isinstance(self._source, (str, Path, QUrl)) else type(self._source).__name__
+        return (
+            f"{pad}Video({src!r}, fit={self.fit!r}) "
+            f"rect=({rect.x:.0f},{rect.y:.0f},{rect.width:.0f}x{rect.height:.0f})"
+        )
+
+
+class SeekBar(Node):
+    """进度条：显示 0–1 进度，点击跳转。"""
+
+    _TRACK_H = 4.0
+    _THUMB_R = 5.0
+
+    def __init__(
+        self,
+        *,
+        progress: float = 0.0,
+        height: float = 28,
+        on_seek: Callable[[float], None] | None = None,
+        flex: float = 1,
+        margin: float = 0,
+        id: str | None = None,
+    ) -> None:
+        super().__init__(flex=flex, margin=margin, id=id)
+        self.progress = progress
+        self.hit_height = height
+        self.on_seek = on_seek
+
+    def seek_from_x(self, x: float) -> None:
+        r = self.rect
+        if r.width <= 0:
+            return
+        ratio = max(0.0, min(1.0, (x - r.x) / r.width))
+        self.progress = ratio
+        self.mark_paint_dirty()
+        if self.on_seek is not None:
+            self.on_seek(ratio)
+
+    def measure(self, constraints: Constraints) -> Size:
+        if self.flex > 0:
+            return Size.zero()
+        return Size(min(200.0, constraints.max_width), self.hit_height)
+
+    def layout(self, rect: Rect) -> None:
+        self.rect = rect
+
+    def paint(self, painter: QPainter) -> None:
+        r = self.paint_rect
+        track_h = self._TRACK_H
+        ty = r.y + (r.height - track_h) / 2
+        ratio = max(0.0, min(1.0, self.progress))
+        track = QRectF(r.x, ty, r.width, track_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#2a2a36"))
+        painter.drawRoundedRect(track, track_h / 2, track_h / 2)
+        fill_w = max(0.0, r.width * ratio)
+        if fill_w > 0:
+            fill = QRectF(r.x, ty, fill_w, track_h)
+            painter.setBrush(QColor("#6b8cff"))
+            painter.drawRoundedRect(fill, track_h / 2, track_h / 2)
+        thumb_x = r.x + fill_w
+        thumb_y = ty + track_h / 2
+        painter.setBrush(QColor("#e8eaf6"))
+        painter.drawEllipse(QPointF(thumb_x, thumb_y), self._THUMB_R, self._THUMB_R)
+
+    def dump(self, indent: int = 0) -> str:
+        pad = "  " * indent
+        rect = self.rect
+        return (
+            f"{pad}SeekBar({self.progress:.2f}) "
             f"rect=({rect.x:.0f},{rect.y:.0f},{rect.width:.0f}x{rect.height:.0f})"
         )
 

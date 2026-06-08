@@ -17,13 +17,16 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from .animation import animate_float
+from .animation import AnimStep, animate_float, animate_sentence
+from .column import Panel
 from .constraints import Constraints
 from .geometry import Rect
 from .node import Node
 from .scroll import ScrollView
 from .theme import Theme, pop_theme, push_theme
-from .widgets import Button, TextArea, TextInput
+from .widgets import Button, SeekBar, TextArea, TextInput
+
+_MouseMoveHandler = Callable[[float, float], None]
 
 
 class UiCanvas(QWidget):
@@ -62,6 +65,7 @@ class UiCanvas(QWidget):
         self.partial_paint_count = 0
         self.nodes_painted_last = 0
         self._running_anims: list = []
+        self._mouse_move_handler: _MouseMoveHandler | None = None
         self.setMinimumSize(480, 360)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
@@ -134,6 +138,9 @@ class UiCanvas(QWidget):
 
         for node in self.root.iter_subtree():
             if not node._paint_dirty or node._damage_rect is not None:
+                continue
+            if self._is_overlay_panel(node):
+                node.set_damage(self._node_screen_rect(node))
                 continue
             if self._is_branch_container(node):
                 continue
@@ -224,6 +231,10 @@ class UiCanvas(QWidget):
         if not children:
             return False
         return not isinstance(node, ScrollView)
+
+    @staticmethod
+    def _is_overlay_panel(node: Node) -> bool:
+        return isinstance(node, Panel) and getattr(node, "overlay_anchor", None) is not None
 
     def relayout(self, *, force: bool = False) -> None:
         """子树任一 layout_dirty（或 force）时，从根整树 measure + layout。"""
@@ -390,6 +401,9 @@ class UiCanvas(QWidget):
                 continue
             if not node._paint_dirty or node._damage_rect is None:
                 continue
+            if self._is_overlay_panel(node):
+                regions.append(node._damage_rect)
+                continue
             if self._is_branch_container(node):
                 continue
             if self._is_scroll_content(node):
@@ -519,6 +533,7 @@ class UiCanvas(QWidget):
         dy: tuple[float, float] | None = None,
         duration: int = 350,
         easing: QEasingCurve.Type = QEasingCurve.Type.OutCubic,
+        reset_on_finish: bool = True,
         on_finished: Callable[[], None] | None = None,
     ) -> None:
         """动画改变 paint_dx / paint_dy，不触发 relayout。"""
@@ -544,6 +559,7 @@ class UiCanvas(QWidget):
                 end=dx[1],
                 duration=duration,
                 easing=easing,
+                reset_on_finish=reset_on_finish,
                 on_finished=wrap_done,
             )
         if dy is not None:
@@ -555,8 +571,19 @@ class UiCanvas(QWidget):
                 end=dy[1],
                 duration=duration,
                 easing=easing,
+                reset_on_finish=reset_on_finish,
                 on_finished=wrap_done,
             )
+
+    def animate_sentence(
+        self,
+        steps: list[AnimStep],
+        *,
+        resolve_id: Callable[[str], Node] | None = None,
+        on_finished: Callable[[], None] | None = None,
+    ) -> None:
+        """串行播放多步 paint 偏移动画。"""
+        animate_sentence(self, steps, resolve_id=resolve_id, on_finished=on_finished)
 
     def _node_screen_rect(self, node: Node, *, use_layout_rect: bool = False) -> Rect:
         """节点在画布上的可见位置（ScrollView 内要减去 scroll_y）。"""
@@ -597,6 +624,16 @@ class UiCanvas(QWidget):
                 return found
         return None
 
+    def set_mouse_move_handler(self, handler: _MouseMoveHandler | None) -> None:
+        self._mouse_move_handler = handler
+        self.setMouseTracking(handler is not None)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._mouse_move_handler is not None:
+            pos = event.position()
+            self._mouse_move_handler(pos.x(), pos.y())
+        super().mouseMoveEvent(event)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         x, y = event.position().x(), event.position().y()
         scroll = self._scroll_at(x, y)
@@ -625,6 +662,9 @@ class UiCanvas(QWidget):
         elif isinstance(hit, TextArea):
             self._set_focus(hit)
             hit.move_cursor_to_point(x, y)
+        elif isinstance(hit, SeekBar):
+            hit.seek_from_x(x)
+            self._set_focus(None)
         elif not isinstance(hit, Button):
             self._set_focus(None)
         if isinstance(hit, Button):
